@@ -11,6 +11,8 @@ the small example files in `examples/`.
   definition, document and workspace symbols, and settings.
 - `test_lsp_server.py`: starts `lsp_server.py` and talks to it over stdio as
   an editor would, end to end.
+- `test_mcp_server.py`: starts `mcp_server.py` and calls `definition_source`
+  through an MCP client over stdio, end to end.
 - `hol_server_paths.py`: paths to the example files, shared by the tests.
 
 - `examples/`:
