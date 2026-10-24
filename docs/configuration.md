@@ -1,6 +1,6 @@
 # Configuration
 
-The flags of the language server `hol-language-server`. Setup: [README](../README.md).
+Both servers take the same flags: the MCP server `hol-light-code-mcp` and the language server `hol-language-server`. Setup: [README](../README.md).
 
 - `--hol-path`: the HOL Light directory.
   - Must hold `hol.ml`. Without it the server stops and says why.
