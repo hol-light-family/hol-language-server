@@ -9,6 +9,8 @@ the small example files in `examples/`.
   lookups.
 - `test_service.py`: the lookups behind editor features: positions, hover, go to
   definition, document and workspace symbols, and settings.
+- `test_lsp_server.py`: starts `lsp_server.py` and talks to it over stdio as
+  an editor would, end to end.
 - `hol_server_paths.py`: paths to the example files, shared by the tests.
 
 - `examples/`: each file starts with a comment saying what it sets up and what
