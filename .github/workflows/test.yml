@@ -2,8 +2,8 @@ name: Tests
 
 on:
   workflow_dispatch:
+  # Every PR, whatever its base, so stacked PRs are tested too.
   pull_request:
-    branches: [main]
   push:
     branches: [main]
 
