@@ -115,8 +115,6 @@ def locals_doc(service: HolLanguageService) -> TextDoc:
     return service.get_document(path)
 
 
-@pytest.mark.xfail(strict=True, reason="Local names are not resolved yet: Go to Definition "
-                   "finds only top-level definitions, here the top-level y.")
 def test_definition_of_a_let_in_name_is_its_binding():
     service = example_service()
     doc = locals_doc(service)
@@ -125,9 +123,6 @@ def test_definition_of_a_let_in_name_is_its_binding():
     assert (target.path, target.range.start.line, target.range.start.character) == (doc.path, 6, 6)
 
 
-@pytest.mark.xfail(strict=True, reason="Local names are not resolved yet: Go to Definition "
-                   "finds only top-level definitions, so parameters jump to the "
-                   "top-level x and y, or nowhere.")
 def test_definition_of_a_parameter_is_the_parameter():
     service = example_service()
     doc = locals_doc(service)
@@ -136,6 +131,46 @@ def test_definition_of_a_parameter_is_the_parameter():
                          ((13, 2), (12, 15)), ((13, 6), (12, 17))]:
         [target] = service.definition(doc, Position(*use))
         assert (target.path, target.range.start.line, target.range.start.character) == (doc.path, *binding)
+
+
+def test_local_names_follow_scope():
+    service = example_service()
+    doc = locals_doc(service)
+
+    def at(snippet: str, skip: int = 0) -> int:
+        return doc.text.index(snippet) + skip
+
+    def jumps(offset: int) -> list[int]:
+        return [doc.offset_at(t.range.start) for t in service.definition(doc, doc.position_at(offset))]
+
+    # Shadowing: `let s = s + 1` uses the first s; the last s is the second.
+    assert jumps(at("s + 1")) == [at("s = 1 in")]
+    assert jumps(at("s;;")) == [at("s = s + 1")]
+    # A binding is its own definition.
+    assert jumps(at("s = 1 in")) == [at("s = 1 in")]
+    # A parameter is in scope in its body only; an outer parameter throughout.
+    assert jumps(at("q + p")) == [at("q = q + p")]
+    assert jumps(at("q + p", 4)) == [at("p =\n")]
+    assert jumps(at("inner q;;")) == [at("inner q =")]
+    assert jumps(at("inner q;;", 6)) == []
+    # An arm variable is in scope in its own arm only.
+    assert jumps(at("w -> w", 5)) == [at("w -> w")]
+    assert jumps(at("None -> w", 8)) == []
+    # A type in an annotation is not bound.
+    assert jumps(at("t;;")) == [at("t: term")]
+    assert jumps(at("term)")) == []
+    # Hover has nothing to show for a local name, rather than the top-level one.
+    assert service.hover(doc, doc.position_at(at("s;;"))) is None
+
+
+def test_a_parameter_named_like_a_global_is_the_parameter():
+    service = example_service()
+    doc = tactics_doc(service)
+    # th in `REWRITE_TAC[th; ADD_SYM_ALT]` is HELPER_TAC's parameter, not the
+    # top-level th above it.
+    use = doc.text.index("th; ADD_SYM_ALT")
+    [target] = service.definition(doc, doc.position_at(use))
+    assert doc.offset_at(target.range.start) == doc.text.index("th =\n")
 
 
 def test_document_symbols_are_position_ordered():
