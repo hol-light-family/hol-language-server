@@ -127,7 +127,7 @@ def test_hover_definition_and_symbols():
         )
         hover = client.request(
             "textDocument/hover",
-            {"textDocument": {"uri": uri(TACTICS)}, "position": {"line": 6, "character": 20}},
+            {"textDocument": {"uri": uri(TACTICS)}, "position": {"line": 12, "character": 20}},
         )
         assert hover["contents"]["value"] == (
             "Theorem `ADD_SYM_ALT`\n```\n`|- !m n. n + m = m + n`\n```"
@@ -135,10 +135,10 @@ def test_hover_definition_and_symbols():
 
         [target] = client.request(
             "textDocument/definition",
-            {"textDocument": {"uri": uri(TACTICS)}, "position": {"line": 5, "character": 5}},
+            {"textDocument": {"uri": uri(TACTICS)}, "position": {"line": 11, "character": 5}},
         )
         assert target["uri"] == uri(TACTICS)
-        assert (target["range"]["start"]["line"], target["range"]["start"]["character"]) == (5, 4)
+        assert (target["range"]["start"]["line"], target["range"]["start"]["character"]) == (11, 4)
 
         symbols = client.request(
             "textDocument/documentSymbol", {"textDocument": {"uri": uri(TACTICS)}}
@@ -190,7 +190,7 @@ def test_unresolved_loads_are_shown():
         client.request("textDocument/documentSymbol", {"textDocument": {"uri": uri(main)}})
         assert client.warnings() == ["Loads not found in the workspace: missing.ml"]
         assert client.diagnostics(main) == [{
-            "range": {"start": {"line": 1, "character": 6}, "end": {"line": 1, "character": 18}},
+            "range": {"start": {"line": 7, "character": 6}, "end": {"line": 7, "character": 18}},
             "message": "File not found: missing.ml",
             "severity": 2,
             "source": "hol-language-server",
