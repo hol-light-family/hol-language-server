@@ -1,3 +1,12 @@
+(* Parser cases for top-level definitions.
+   Checked: 36 definitions, 1 of them a theorem (in_ball_annulus), and 1 load.
+   - Destructuring patterns: lists, arrays, conses, tuples.
+   - Labeled and optional arguments, and type annotations.
+   - Operator names in parentheses, such as (THEN1).
+   - Nested comments, and comments between arguments.
+   - Statements cut short (`let x = ;;`).
+   - `needs "modules.ml"`: followed when the file is indexed. *)
+
 let [a; b] = [1; 2];;
 let [|a; b; c;|] = ;;
 let x :: _ = ;;
@@ -10,7 +19,7 @@ let compare (Set m1, Set m2) = Pmap.compare compareValue (m1,m2);;
 (* Nested (* comments 
 *) *)
 
-needs "modules.hl";;
+needs "modules.ml";;
 
 let idSetAddMax max ((_,len) as id_len, set) : idSet =
   if len <= max then Pset.add set id_len else set;;

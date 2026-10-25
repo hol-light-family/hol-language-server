@@ -1,3 +1,9 @@
+(* Module structure: nested modules, `open`, `include`, a signature, a module
+   type, and a functor (Make).
+   Checked: 7 definitions, the 6 modules and how they nest, and the position of
+   the top-level `open Utils`. newMap1 and exists1 follow a `type` item that is
+   not ended by `;;`, and must still be found. *)
+
 (* Examples from metis.ml, firstorder.ml, thecops.ml *)
 
 module Utils = struct
