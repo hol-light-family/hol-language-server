@@ -33,10 +33,17 @@ select = [
 ]
 ignore = ["I001"]
 
+[tool.pytest.ini_options]
+# The repository root on the path, so `hol_language_server_core` imports;
+# tests/ for the fixture paths.
+pythonpath = [".", "tests"]
+testpaths = ["tests"]
+
 [tool.pyright]
 include = ["."]
 exclude = ["**/.*", "**/__pycache__", "_work"]
-extraPaths = ["."]
+# The same paths as [tool.pytest.ini_options].
+extraPaths = [".", "tests"]
 typeCheckingMode = "standard"
 reportUnusedCallResult = "none"
 # Every parameter and return carries a type.
@@ -47,3 +54,9 @@ reportUnusedImport = "error"
 reportUnusedVariable = "error"
 reportUnnecessaryComparison = "error"
 reportUnnecessaryIsInstance = "error"
+
+[dependency-groups]
+dev = [
+    "basedpyright==1.40.2",
+    "pytest>=9.1.1",
+]
