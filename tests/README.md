@@ -40,7 +40,7 @@ that only checks that nothing crashes is not enough.
 For behavior that is wanted but not supported yet, write the test with the
 correct expected output and mark it `@pytest.mark.xfail(strict=True,
 reason=...)`. `strict` makes the test fail once the behavior starts working, so
-the marker gets removed then. The tests on `locals.ml` are an example.
+the marker gets removed then.
 
 Other tests assert exact counts and positions in the shared example files, so
 editing one of them can break those tests. A new file is usually safer.

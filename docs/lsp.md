@@ -8,9 +8,15 @@ The language server `hol-language-server` gives an editor lookups over HOL Light
   - A theorem or definition: its statement.
   - Any other value: its name, and its type when the source writes one.
   - A module: its name.
+  - A local name (see below): nothing.
   - It does not show the HOL Light `Help/` pages.
 - Go to Definition: jumps to where a name is defined.
   - Works for definitions and modules.
+  - Works for local names: a `let ... in` name, a function parameter, or a variable of a `match`, `function` or `try` arm. It jumps to the binding in scope, not to a top-level definition with the same name.
+    - Scope is found by a heuristic over brackets, `let ... in`, and arms, not the full OCaml grammar.
+    - Patterns longer than 40 tokens are not read, so their names are not found as local.
+    - A constructor in a pattern, such as `Some` in `Some x`, counts as a bound name.
+    - Local names are found only inside a top-level definition, not in a bare expression such as `e;;`.
   - On `needs "..."`, it opens the file named.
 - Symbols.
   - The outline of the open file: every definition and module in it.
