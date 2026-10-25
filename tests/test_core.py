@@ -27,8 +27,8 @@ def read_doc(*parts: str) -> TextDoc:
         return TextDoc(path, handle.read())
 
 
-def test_parser_definitions_hl():
-    doc = read_doc("definitions.hl")
+def test_parser_definitions():
+    doc = read_doc("definitions.ml")
     result = parse_text(doc.text, doc.path, CustomCommands())
     assert len(result.definitions) == 36
     assert len(result.dependencies) == 1
@@ -40,15 +40,15 @@ def test_parser_definitions_hl():
     )
 
 
-def test_parser_modules_hl():
-    doc = read_doc("modules.hl")
+def test_parser_modules():
+    doc = read_doc("modules.ml")
     result = parse_text(doc.text, doc.path, CustomCommands())
     # vscode-hol-light finds 5: newMap1 and exists1 follow a `type`
     # item which is not ended by `;;`.
     assert len(result.definitions) == 7
     assert len(result.dependencies) == 0
     assert len(result.modules) == 6
-    assert result.global_module.open_decls == [OpenDecl("Utils", 523, 533)]
+    assert result.global_module.open_decls == [OpenDecl("Utils", 843, 853)]
     mods = result.modules
     assert [m.full_name for m in mods] == [
         "Utils", "Utils.Pair", "Utils.List", "Utils.Substlist", "Mmap", "Mmap.Make",
@@ -114,13 +114,13 @@ def test_numeric_literals_are_not_identifiers():
     assert tokens == []
 
 
-def test_database_definitions_hl_and_dependencies():
-    doc = read_doc("definitions.hl")
+def test_database_definitions_and_dependencies():
+    doc = read_doc("definitions.ml")
     database = Database()
     database.index_document_with_dependencies(doc, HOL, ["."], True, CustomCommands())
-    dep_path = os.path.join(EXAMPLES, "modules.hl")
+    dep_path = os.path.join(EXAMPLES, "modules.ml")
     examples = {doc.path, dep_path}
-    # 38 in vscode-hol-light (see modules.hl above).
+    # 38 in vscode-hol-light (see modules.ml above).
     assert len({d.name for ds in database._definition_index.values() for d in ds
                 if d.get_file_path() in examples}) == 40
     assert len({m.name for ms in database._module_index.values() for m in ms
@@ -135,8 +135,8 @@ def test_database_definitions_hl_and_dependencies():
     assert (
         len(database.find_definitions("const", all_deps, True, {utils_mod})) == 1
     )
-    assert database.find_definitions_and_modules("Pair", dep_path, 509) == ([], set())
-    assert database.find_definitions_and_modules("Pair", dep_path, 536) == (
+    assert database.find_definitions_and_modules("Pair", dep_path, 829) == ([], set())
+    assert database.find_definitions_and_modules("Pair", dep_path, 856) == (
         [],
         {utils_mod.modules[0]},
     )

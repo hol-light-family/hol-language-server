@@ -46,8 +46,8 @@ def test_word_at_position_falls_back_to_operators():
 def test_hover_shows_the_theorem_statement():
     service = example_service()
     doc = tactics_doc(service)
-    # ADD_SYM_ALT in `REWRITE_TAC[th; ADD_SYM_ALT]` on line 6.
-    found = service.hover(doc, Position(6, 20))
+    # ADD_SYM_ALT in `REWRITE_TAC[th; ADD_SYM_ALT]` on line 12 (0-based).
+    found = service.hover(doc, Position(12, 20))
     assert found is not None
     markdown, _ = found
     assert markdown == "Theorem `ADD_SYM_ALT`\n```\n`|- !m n. n + m = m + n`\n```"
@@ -56,20 +56,20 @@ def test_hover_shows_the_theorem_statement():
 def test_hover_shows_a_value_and_a_module():
     service = example_service()
     doc = tactics_doc(service)
-    found = service.hover(doc, Position(5, 5))
+    found = service.hover(doc, Position(11, 5))
     assert found is not None
     markdown, _ = found
     assert markdown == "*HELPER_TAC*"
-    assert service.hover(doc, Position(0, 1)) is None
+    assert service.hover(doc, Position(6, 1)) is None
 
 
 def test_definition_jumps_to_the_name():
     service = example_service()
     doc = tactics_doc(service)
-    [target] = service.definition(doc, Position(5, 5))
+    [target] = service.definition(doc, Position(11, 5))
     assert target.path == doc.path
-    assert (target.range.start.line, target.range.start.character) == (5, 4)
-    assert service.definition(doc, Position(0, 1)) == []
+    assert (target.range.start.line, target.range.start.character) == (11, 4)
+    assert service.definition(doc, Position(6, 1)) == []
     assert service.definition(doc, Position(doc.line_count, 0)) == []
     assert service.definition(doc, Position(-1, 0)) == []
 
@@ -79,8 +79,63 @@ def test_definition_jumps_through_needs():
     path = os.path.join(PROJECT, "main.ml")
     service.index(path, True)
     doc = service.get_document(path)
-    [target] = service.definition(doc, Position(0, 8))
+    [target] = service.definition(doc, Position(6, 8))
     assert target.path == os.path.join(PROJECT, "lib", "util.ml")
+
+
+def position_of(doc: TextDoc, text: str) -> Position:
+    """The position where `text` first occurs in the document."""
+    return doc.position_at(doc.text.index(text))
+
+
+def test_conversions_resolve_where_they_are_used():
+    service = example_service()
+    path = os.path.join(PROJECT, "conversions.ml")
+    service.index(path, True)
+    doc = service.get_document(path)
+    # MY_CONV, defined on line 11 (0-based), where CONV_TAC and CONV_RULE use it.
+    for use in ("MY_CONV);;", "MY_CONV (ARITH_RULE"):
+        [target] = service.definition(doc, position_of(doc, use))
+        assert (target.path, target.range.start.line, target.range.start.character) == (path, 11, 4)
+        found = service.hover(doc, position_of(doc, use))
+        assert found is not None and found[0] == "*MY_CONV*"
+    # ADD_SYM_CONV, defined on line 9, where THENC combines it.
+    [target] = service.definition(doc, position_of(doc, "ADD_SYM_CONV THENC"))
+    assert (target.range.start.line, target.range.start.character) == (9, 4)
+    # The theorem a conversion is built from, and a theorem proved with one.
+    found = service.hover(doc, position_of(doc, "ADD_SYM_ALT]"))
+    assert found is not None and found[0] == "Theorem `ADD_SYM_ALT`\n```\n`|- !m n. n + m = m + n`\n```"
+    found = service.hover(doc, position_of(doc, "MY_CONV_THM"))
+    assert found is not None and found[0] == "Theorem `MY_CONV_THM`\n```\n`|- 1 + 2 = 3`\n```"
+
+
+def locals_doc(service: HolLanguageService) -> TextDoc:
+    path = os.path.join(PROJECT, "locals.ml")
+    service.index(path, True)
+    return service.get_document(path)
+
+
+@pytest.mark.xfail(strict=True, reason="Local names are not resolved yet: Go to Definition "
+                   "finds only top-level definitions, here the top-level y.")
+def test_definition_of_a_let_in_name_is_its_binding():
+    service = example_service()
+    doc = locals_doc(service)
+    # The y on line 7 (0-based) is bound by `let y = 1 in` on line 6.
+    [target] = service.definition(doc, Position(7, 2))
+    assert (target.path, target.range.start.line, target.range.start.character) == (doc.path, 6, 6)
+
+
+@pytest.mark.xfail(strict=True, reason="Local names are not resolved yet: Go to Definition "
+                   "finds only top-level definitions, so parameters jump to the "
+                   "top-level x and y, or nowhere.")
+def test_definition_of_a_parameter_is_the_parameter():
+    service = example_service()
+    doc = locals_doc(service)
+    # Uses on lines 10 and 13 (0-based), and the parameters they name.
+    for use, binding in [((10, 2), (9, 18)), ((10, 6), (9, 20)),
+                         ((13, 2), (12, 15)), ((13, 6), (12, 17))]:
+        [target] = service.definition(doc, Position(*use))
+        assert (target.path, target.range.start.line, target.range.start.character) == (doc.path, *binding)
 
 
 def test_document_symbols_are_position_ordered():
