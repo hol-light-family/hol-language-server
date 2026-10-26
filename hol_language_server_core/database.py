@@ -9,7 +9,8 @@ from collections.abc import Callable
 
 from hol_language_server_core import util
 from hol_language_server_core.config import DEBUG
-from hol_language_server_core.parser import CustomCommands, Definition, Module, OpenDecl, ParseResult, parse_text
+from hol_language_server_core.parser import (CustomCommands, Definition, Module, OpenDecl, ParseResult,
+                                             declared_infixes, parse_text)
 from hol_language_server_core.parser import Dependency as ParsedDependency
 from hol_language_server_core.text import Location, Position, Range, TextDoc, location
 
@@ -68,8 +69,8 @@ def _resolve_dependencies(parser_deps: list[ParsedDependency], hol_path: str, ba
 
 
 class FileIndex:
-    """Everything indexed for one file: its dependencies, definitions,
-    modules, and the module tracking its open/include statements."""
+    """Everything indexed for one file: its dependencies, definitions, HOL
+    constants, modules, and the module tracking its open/include statements."""
 
     def __init__(self, mtime: float | None, dependencies: list[Dependency], result: ParseResult) -> None:
         self.mtime = mtime
@@ -77,6 +78,7 @@ class FileIndex:
         # allows cyclic dependencies, but the result could be unpredictable).
         self.dependencies = dependencies
         self.definitions = result.definitions
+        self.constants = result.constants
         self.modules = result.modules
         self.global_module = result.global_module
 
@@ -89,6 +91,10 @@ class Database:
         self._file_index: dict[str, FileIndex] = {}
         # Definitions sharing a name (key) live in different files.
         self._definition_index: dict[str, list[Definition]] = {}
+        # HOL constants, looked up from inside terms only.
+        self._constant_index: dict[str, list[Definition]] = {}
+        # Infix names the base HOL Light files declare (`parse_as_infix`).
+        self._infixes: frozenset[str] = frozenset()
         # Modules sharing a name may live in different files or nest.
         self._module_index: dict[str, list[Module]] = {}
         # Results of all_dependencies and loaders_of; cleared on any change.
@@ -137,6 +143,7 @@ class Database:
                 index.setdefault(item.name, []).append(item)
 
         add(self._definition_index, result.definitions)
+        add(self._constant_index, result.constants)
         add(self._module_index, result.modules)
 
     def _remove_from_index(self, file_path: str) -> None:
@@ -153,6 +160,7 @@ class Database:
                     del index[item.name]
 
         remove(self._definition_index, file.definitions)
+        remove(self._constant_index, file.constants)
         remove(self._module_index, file.modules)
         del self._file_index[file_path]
 
@@ -164,7 +172,7 @@ class Database:
         mtime = os.stat(file_path).st_mtime
         known = file.mtime if file is not None and file.mtime is not None else -1
         if mtime > known:
-            result = parse_text(util.read_text(file_path), file_path, custom)
+            result = parse_text(util.read_text(file_path), file_path, custom, self._infixes)
             if root_paths is None:
                 deps = []
             else:
@@ -320,6 +328,11 @@ class Database:
             and (definition.module in modules if definition.module is not None else allow_global)
         ]
 
+    def find_constants(self, name: str, file_path: str) -> list[Definition]:
+        """HOL constants of the name that the file or its dependencies define."""
+        deps = self.all_dependencies(file_path)
+        return [c for c in self._constant_index.get(name, []) if c.get_file_path() in deps]
+
     def find_all_by_name(self, name: str,
                          deps: set[str] | None = None) -> tuple[list[Definition], list[Module]]:
         """Definitions and modules of the unqualified name, in deps when given."""
@@ -367,15 +380,18 @@ class Database:
                              "or set the hol-light path setting")
         if not util.file_exists(os.path.join(hol_path, "hol.ml"), False):
             raise ValueError(f"Not a HOL Light directory (no hol.ml): {hol_path}")
-        for entry in util.read_dir(hol_path):
-            name = entry.name
-            if entry.is_file() and name.endswith(".ml") and not HOL_LIGHT_BASE_SKIP.match(name):
-                file_path = os.path.join(hol_path, entry.name)
-                # Add before indexing the file.
-                self._base_hol_light_files.add(file_path)
-                indexed, _ = self.index_file(file_path, hol_path, None, custom)
-                if indexed and DEBUG:
-                    logger.error("Indexed: %s", file_path)
+        entries = [entry for entry in util.read_dir(hol_path)
+                   if entry.is_file() and entry.name.endswith(".ml") and not HOL_LIGHT_BASE_SKIP.match(entry.name)]
+        # Infixes first: a file may define a constant another file declares infix.
+        self._infixes = frozenset(name for entry in entries
+                                  for name in declared_infixes(util.read_text(entry.path)))
+        for entry in entries:
+            file_path = os.path.join(hol_path, entry.name)
+            # Add before indexing the file.
+            self._base_hol_light_files.add(file_path)
+            indexed, _ = self.index_file(file_path, hol_path, None, custom)
+            if indexed and DEBUG:
+                logger.error("Indexed: %s", file_path)
         if DEBUG:
             logger.error("Done indexing HOL Light base files")
 
@@ -388,7 +404,7 @@ class Database:
         doc_path = document.path
         if DEBUG:
             logger.error("Indexing: %s", doc_path)
-        result = parse_text(document.text, doc_path, custom)
+        result = parse_text(document.text, doc_path, custom, self._infixes)
         doc_dep_names = {dep.name: dep for dep in result.dependencies}
         old_file = self._file_index.get(doc_path)
         old_names = [dep.name for dep in old_file.dependencies] if old_file is not None else []
