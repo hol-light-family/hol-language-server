@@ -16,7 +16,7 @@ the small example files in `examples/`.
 - `examples/`: each file starts with a comment saying what it sets up and what
   the tests check in it.
     - `hol/`: stands in for a HOL Light directory (`hol.ml`, `kernel.ml`).
-    - `project/`: a small workspace whose files load each other. Each file sets up a case: `main.ml` loads a file that does not exist, `dup.ml` defines the same name twice, `ctx.ml` uses names loaded only by the file that loads it, `conversions.ml` builds and uses conversions, and `locals.ml` has `let ... in` names and function parameters.
+    - `project/`: a small workspace whose files load each other. Each file sets up a case: `main.ml` loads a file that does not exist, `dup.ml` defines the same name twice, `ctx.ml` uses names loaded only by the file that loads it, `conversions.ml` builds and uses conversions, `locals.ml` has `let ... in` names and function parameters, and `constants.ml` defines HOL constants and uses them in terms.
     - `definitions.ml`, `modules.ml`: single files for parser cases.
 
 Every test asserts the expected result: the number of definitions parsed, the

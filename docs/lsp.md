@@ -9,6 +9,7 @@ The language server `hol-language-server` gives an editor lookups over HOL Light
   - Any other value: its name, and its type when the source writes one.
   - A module: its name.
   - A local name (see below): nothing.
+  - Inside a term (between backquotes), a HOL constant: the statement of the definition that introduces it. A variable: nothing.
   - It does not show the HOL Light `Help/` pages.
 - Go to Definition: jumps to where a name is defined.
   - Works for definitions and modules.
@@ -17,6 +18,11 @@ The language server `hol-language-server` gives an editor lookups over HOL Light
     - Patterns longer than 40 tokens are not read, so their names are not found as local.
     - A constructor in a pattern, such as `Some` in `Some x`, counts as a bound name.
     - Local names are found only inside a top-level definition, not in a bare expression such as `e;;`.
+  - Inside a term (between backquotes), it works for HOL constants, not OCaml names. It jumps to the constant in the term of the definition that introduces it, such as `fib` in `let FIB = define `fib 0 = 0 /\ ...``. A variable in a term goes nowhere. An antiquotation such as `^t` names an OCaml value and is looked up as one.
+    - Constants are read from `define`, `new_definition`, `new_basic_definition`, `new_recursive_definition`, `new_inductive_definition`, and custom definition commands: the head of each clause's left side, or of each rule's conclusion.
+    - An infix head, as in `x IN s = ...`, is found when it is a symbol, is declared with `parse_as_infix` in the same file or a core HOL Light file, or the name before it is bound by `!`. Otherwise the name before it is taken.
+    - Not read: constructors of `define_type`, `new_specification`, and constants named through an overloaded interface: `inv` finds nothing, and `+` finds every definition written with `+`.
+    - Terms in Unicode syntax are not read.
   - On `needs "..."`, it opens the file named.
 - Symbols.
   - The outline of the open file: every definition and module in it.

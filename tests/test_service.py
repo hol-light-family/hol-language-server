@@ -173,6 +173,41 @@ def test_a_parameter_named_like_a_global_is_the_parameter():
     assert doc.offset_at(target.range.start) == doc.text.index("th =\n")
 
 
+def test_constants_in_terms_go_to_their_definition():
+    service = example_service()
+    path = os.path.join(PROJECT, "constants.ml")
+    service.index(path, True)
+    doc = service.get_document(path)
+
+    def at(snippet: str, skip: int = 0) -> int:
+        return doc.text.index(snippet) + skip
+
+    def jumps(offset: int) -> list[tuple[str, int]]:
+        return [(t.path, service.get_document(t.path).offset_at(t.range.start))
+                for t in service.definition(doc, doc.position_at(offset))]
+
+    # Each kind of definition, used in another term: the head of its term.
+    assert jumps(at("fib 1 = 1")) == [(path, at("fib n = fibonacci"))]
+    assert jumps(at("fib3 1 = 1")) == [(path, at("fib3 0 = 0"))]
+    assert jumps(at("fibonacci n +")) == [(path, at("fibonacci 0 = 0"))]
+    assert jumps(at("divides_alt 4")) == [(path, at("divides_alt n <=>"))]
+    assert jumps(at("evens 4")) == [(path, at("evens 0 /\\"))]
+    hol = os.path.join(HOL, "hol.ml")
+    assert jumps(at("EVEN 4")) == [(hol, service.get_document(hol).text.index("EVEN n <=>"))]
+    # Variables go nowhere, also n, which is an OCaml value too.
+    assert jumps(at("fib n =", 4)) == []
+    assert jumps(at("fibonacci (n + 2)", 11)) == []
+    # Outside terms, names are OCaml names: FIB_DEF and fibonacci the theorems.
+    assert jumps(at("FIB_DEF;")) == [(path, at("FIB_DEF ="))]
+    assert jumps(at("fibonacci]")) == [(path, at("fibonacci = define"))]
+    # An antiquotation names an OCaml value.
+    assert jumps(at("^x_term", 1)) == [(path, at("x_term ="))]
+    found = service.hover(doc, doc.position_at(at("fib 1 = 1")))
+    assert found is not None
+    assert found[0] == "Constant `fib`, defined by `FIB_DEF`\n```\n`|- fib n = fibonacci n`\n```"
+    assert service.hover(doc, doc.position_at(at("fib n =", 4))) is None
+
+
 def test_document_symbols_are_position_ordered():
     service = example_service()
     path = os.path.join(PROJECT, "main.ml")
