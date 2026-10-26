@@ -1,27 +1,24 @@
 [project]
 name = "hol-language-server"
 version = "0.1.0"
-description = "Static lookup for HOL Light sources: an MCP server and a language server over one parser and index"
+description = "Static lookup for HOL Light sources: a language server over a parser and index of definitions and loads"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "lsprotocol>=2025.0.0",
-    "mcp>=1.30.0,<2",
-    "pydantic>=2.14.1",
     "pygls>=2.1.1",
 ]
 
 [project.scripts]
 hol-language-server = "lsp_server:cli"
-hol-light-code-mcp = "mcp_server:cli"
 
 [build-system]
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-# The two servers are top-level modules beside the package they share.
-only-include = ["hol_language_server_core", "lsp_server.py", "mcp_server.py"]
+# The server is a top-level module beside the package it uses.
+only-include = ["hol_language_server_core", "lsp_server.py"]
 
 [tool.ruff]
 extend-exclude = ["_work"]

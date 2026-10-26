@@ -28,7 +28,7 @@ The language server `hol-language-server` gives an editor lookups over HOL Light
 
 ## Settings
 
-- The server takes the same flags as the MCP server ([configuration.md](configuration.md)).
+- The server takes command-line flags ([configuration.md](configuration.md)).
 - An editor can also send settings when it starts the server (the LSP `initializationOptions`). These win over the flags.
   - They may be wrapped as `{"hol-light": {...}}` or sent bare.
   - `path` (text): the HOL Light directory.
