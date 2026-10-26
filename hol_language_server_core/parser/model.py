@@ -24,6 +24,8 @@ class DefinitionType(IntEnum):
     definition = 1
     term = 2
     other = 3
+    # A HOL constant, introduced by a definition's term.
+    constant = 4
 
 
 DEFINITION_TYPE_NAMES = {
@@ -31,6 +33,7 @@ DEFINITION_TYPE_NAMES = {
     DefinitionType.definition: "definition",
     DefinitionType.term: "term",
     DefinitionType.other: "value",
+    DefinitionType.constant: "constant",
 }
 
 
@@ -48,6 +51,8 @@ class Definition:
         # the bindings of `let ... and ...`.
         self.source_start: int | None = None
         self.source_end: int | None = None
+        # Constants only: the OCaml name of the definition introducing it.
+        self.defined_by: str | None = None
         self._file_path = file_path
 
     def get_file_path(self) -> str:
@@ -69,6 +74,8 @@ class Definition:
             return f"Definition `{self.name}`\n```\n`|- {self.content}`\n```"
         if self.def_type == DefinitionType.term:
             return "```\n`" + self.content + "`\n```"
+        if self.def_type == DefinitionType.constant:
+            return f"Constant `{self.name}`, defined by `{self.defined_by}`\n```\n`|- {self.content}`\n```"
         text = f"*{self.name}*"
         if self.content:
             # content represents type
@@ -120,6 +127,8 @@ class ParseResult:
     dependencies: list[Dependency]
     # Tracks all open and include statements. Holds no definitions or modules.
     global_module: Module
+    # HOL constants the definitions introduce, found in their terms.
+    constants: list[Definition] = field(default_factory=list[Definition])
 
 
 @dataclass

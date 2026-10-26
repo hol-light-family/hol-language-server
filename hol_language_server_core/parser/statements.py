@@ -6,16 +6,19 @@ import logging
 import re
 from dataclasses import dataclass
 
-from hol_language_server_core.parser.lexer import Lexer, LexerState, ParserError, Token, TokenType
+from hol_language_server_core.parser.lexer import Lexer, LexerState, ParserError, Token, TokenType, line_number
 from hol_language_server_core.parser.model import (CustomCommands, Definition, DefinitionType, Dependency, Module,
                                                    OpenDecl, ParseResult)
+from hol_language_server_core.parser.terms import declared_infixes, term_constants
 from hol_language_server_core.text import CHAR_LITERAL, Position, Range
 
 logger = logging.getLogger(__name__)
 
 
-def parse_text(text: str, file_path: str, custom: CustomCommands) -> ParseResult:
-    return Parser(text, custom).parse(file_path)
+def parse_text(text: str, file_path: str, custom: CustomCommands,
+               infixes: frozenset[str] = frozenset()) -> ParseResult:
+    """infixes: infix names declared outside the file (it may declare its own)."""
+    return Parser(text, custom, infixes).parse(file_path)
 
 
 def _skip_re(search_module_end: bool) -> re.Pattern[str]:
@@ -35,7 +38,7 @@ class Binding:
 
 
 class Parser(Lexer):
-    def __init__(self, text: str, custom: CustomCommands) -> None:
+    def __init__(self, text: str, custom: CustomCommands, infixes: frozenset[str] = frozenset()) -> None:
         super().__init__(text)
 
         def mk(words: list[str]) -> re.Pattern[str]:
@@ -45,6 +48,10 @@ class Parser(Lexer):
         self._theorem_re = mk(["prove", "VECTOR_ARITH", "ARITH_RULE", "REAL_ARITH", *custom.theorems])
         self._definition_re = mk(["new_definition", "new_basic_definition", "define", *custom.definitions])
         self._def_other_re = mk(["new_recursive_definition"])
+        self._inductive_re = mk(["new_inductive_definition"])
+        # Infix names, to find the head of `x IN s = ...`.
+        self._infixes = declared_infixes(text) | infixes
+        self._constants: list[Definition] = []
 
     def skip_to_next_statement(self, search_module_end: bool, item_indent: int) -> None:
         # The next call skips the current token. Do not check for `module`
@@ -519,10 +526,32 @@ class Parser(Lexer):
             Definition(name, def_type, content, module, offset, uri, position)
         )
 
+    def _add_constants(self, uri: str, name: str, token: Token, inductive: bool) -> None:
+        """Record the constants that the definition `name`'s term token introduces."""
+        if token.type != TokenType.term:
+            return
+        term = token.get_value(self.text)[1:-1]
+        for constant, at in term_constants(term, self._infixes, inductive):
+            offset = token.start_pos + 1 + at
+            line = line_number(self._line_starts, offset)
+            found = Definition(constant, DefinitionType.constant, term, None, offset, uri,
+                               Position(line, offset - self._line_starts[line]))
+            found.defined_by = name
+            self._constants.append(found)
+
     def _parse_binding(self, uri: str, definitions: list[Definition],
                        module_stack: list[Module]) -> None:
         """Classifies one binding of the current `let`."""
         lhs = self._parse_let_binding_lhs()
+        # `let R_RULES, R_INDUCT, R_CASES = new_inductive_definition `...``.
+        state = self.save_state()
+        if lhs and self.next_skip_comments().value == "=":
+            self._skip_while_eq("(")
+            if self._inductive_re.match(self.next_skip_comments().value or ""):
+                self._skip_while_eq("(")
+                self._add_constants(uri, lhs[0].name_token.get_value(self.text),
+                                    self.next_skip_comments(), True)
+        self.reset_state(state)
         if len(lhs) == 1 and self.next_skip_comments().value == "=":
             name = lhs[0].name_token.get_value(self.text)
             pos = lhs[0].name_token.start_pos
@@ -563,6 +592,7 @@ class Parser(Lexer):
             elif self._definition_re.match(value):
                 self._skip_while_eq("(")
                 token = self.next_skip_comments()
+                self._add_constants(uri, name, token, False)
                 if token.type in (TokenType.term, TokenType.string):
                     text = token.get_value(self.text)[1:-1]
                     self._add_definition(uri, definitions, module_stack,
@@ -582,6 +612,7 @@ class Parser(Lexer):
                 self.next_token()
                 self._skip_while_eq("(")
                 token = self.next_skip_comments()
+                self._add_constants(uri, name, token, False)
                 if token.type in (TokenType.term, TokenType.string):
                     text = token.get_value(self.text)[1:-1]
                     self._add_definition(uri, definitions, module_stack,
@@ -621,6 +652,7 @@ class Parser(Lexer):
     def parse(self, uri: str) -> ParseResult:
         self.pos = 0
         self._cur = None
+        self._constants = []
 
         global_module = Module("", None, 0, uri, Position(0, 0))
         definitions: list[Definition] = []
@@ -721,7 +753,7 @@ class Parser(Lexer):
             for mod in module_stack:
                 self._report(f"Unclosed module: {mod.name}", mod.start, uri)
 
-        return ParseResult(definitions, modules, dependencies, global_module)
+        return ParseResult(definitions, modules, dependencies, global_module, self._constants)
 
     def _report(self, message: str, token_or_offset: Token | int | None, uri: str) -> None:
         """Warn about something the parser skipped or misread."""
