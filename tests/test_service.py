@@ -208,6 +208,43 @@ def test_constants_in_terms_go_to_their_definition():
     assert service.hover(doc, doc.position_at(at("fib n =", 4))) is None
 
 
+def test_a_bound_variable_named_like_a_constant_goes_nowhere(tmp_path: Path):
+    # Cut down from s2n-bignum arm/proofs/edwards25519_epadd.ml, where
+    # `!p3 p1 Q1 p2 Q2 pc stackpointer.` binds the names of two registers.
+    (tmp_path / "main.ml").write_text(
+        "let Q1 = define `Q1 = 1`;;\n"
+        "let TH = prove(`!Q1. Q1 = 2`, ALL_TAC);;\n"
+        "let SCOPED = `(!Q1. Q1 = 3) /\\ Q1 = 4`;;\n"
+        "let OTHERS = `(?!Q1:num. Q1 = 5) /\\ (\\Q1. Q1 + 6) = f /\\ [!(Q1:24 word). Q1 = 7; Q1 = 8]`;;\n"
+        "let CONJ = `x /\\ Q1 = 9 \\/ Q1 = 10`;;\n")
+    settings = default_settings()
+    settings.hol_path = HOL
+    settings.workspace = str(tmp_path)
+    service = HolLanguageService(settings)
+    path = str(tmp_path / "main.ml")
+    service.index(path, True)
+    doc = service.get_document(path)
+    constant = [(path, 0)]
+
+    def jumps(text: str) -> list[tuple[str, int]]:
+        return [(t.path, t.range.start.line) for t in service.definition(doc, position_of(doc, text))]
+
+    # In the binder's body and in the binder itself: the variable.
+    assert jumps("Q1 = 2") == []
+    assert jumps("Q1. Q1 = 2") == []
+    assert service.hover(doc, position_of(doc, "Q1 = 2")) is None
+    # The body ends at the bracket closing around the binder, or a list's `;`.
+    assert jumps("Q1 = 3") == []
+    assert jumps("Q1 = 4") == constant
+    assert jumps("Q1 = 7") == []
+    assert jumps("Q1 = 8") == constant
+    # `?!` and `\` bind; the `\` of `/\` and `\/` does not.
+    assert jumps("Q1 = 5") == []
+    assert jumps("Q1 + 6") == []
+    assert jumps("Q1 = 9") == constant
+    assert jumps("Q1 = 10") == constant
+
+
 def test_document_symbols_are_position_ordered():
     service = example_service()
     path = os.path.join(PROJECT, "main.ml")
