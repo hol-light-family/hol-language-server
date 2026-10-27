@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 import pytest
+from expectations import check_expectations, read_expectations
 from hol_server_paths import EXAMPLES, HOL, PROJECT
 from hol_language_server_core.config import default_settings
 from hol_language_server_core.database import Database
@@ -28,32 +29,36 @@ def read_doc(*parts: str) -> TextDoc:
         return TextDoc(path, handle.read())
 
 
+@pytest.mark.parametrize("name", ["definitions.ml", "modules.ml", "sources.ml"])
+def test_parser_finds_what_the_expect_comments_say(name: str):
+    doc = read_doc(name)
+    check_expectations(doc.text, parse_text(doc.text, doc.path, CustomCommands()))
+
+
+def test_expectations_are_read_in_order_with_kinds_and_sources():
+    definitions, modules = read_expectations(
+        "(* expect: a TH:theorem@2:1-3:9 *)\n(* expect module: M *)\n(* not one *)")
+    assert [(e.full_name, e.kind, e.source) for e in definitions] == [
+        ("a", DefinitionType.other, None), ("TH", DefinitionType.theorem, (2, 1, 3, 9))]
+    assert [e.full_name for e in modules] == ["M"]
+
+
 def test_parser_definitions():
     doc = read_doc("definitions.ml")
     result = parse_text(doc.text, doc.path, CustomCommands())
-    assert len(result.definitions) == 36
     assert len(result.dependencies) == 1
-    assert len(result.modules) == 0
     assert result.global_module.open_decls == []
-    assert (
-        len([d for d in result.definitions if d.def_type == DefinitionType.theorem])
-        == 1
-    )
 
 
 def test_parser_modules():
     doc = read_doc("modules.ml")
     result = parse_text(doc.text, doc.path, CustomCommands())
-    # vscode-hol-light finds 5: newMap1 and exists1 follow a `type`
+    # vscode-hol-light misses newMap1 and exists1: they follow a `type`
     # item which is not ended by `;;`.
-    assert len(result.definitions) == 7
     assert len(result.dependencies) == 0
-    assert len(result.modules) == 6
-    assert result.global_module.open_decls == [OpenDecl("Utils", 843, 853)]
+    open_at = doc.text.index("open Utils;;")
+    assert result.global_module.open_decls == [OpenDecl("Utils", open_at, open_at + len("open Utils"))]
     mods = result.modules
-    assert [m.full_name for m in mods] == [
-        "Utils", "Utils.Pair", "Utils.List", "Utils.Substlist", "Mmap", "Mmap.Make",
-    ]
     assert mods[0].modules == [mods[1], mods[2], mods[3]]
     assert all(mods[i + 1].start > mods[i].start for i in range(len(mods) - 1))
 
@@ -181,8 +186,12 @@ def test_database_definitions_and_dependencies():
     assert (
         len(database.find_definitions("const", all_deps, True, {utils_mod})) == 1
     )
-    assert database.find_definitions_and_modules("Pair", dep_path, 829) == ([], set())
-    assert database.find_definitions_and_modules("Pair", dep_path, 856) == (
+    # Pair is seen only after `open Utils`.
+    dep_text = read_doc("modules.ml").text
+    before_open = dep_text.index("let expr")
+    after_open = dep_text.index("module Mmap")
+    assert database.find_definitions_and_modules("Pair", dep_path, before_open) == ([], set())
+    assert database.find_definitions_and_modules("Pair", dep_path, after_open) == (
         [],
         {utils_mod.modules[0]},
     )

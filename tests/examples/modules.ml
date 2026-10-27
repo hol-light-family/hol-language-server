@@ -1,8 +1,10 @@
 (* Module structure: nested modules, `open`, `include`, a signature, a module
    type, and a functor (Make).
-   Checked: 7 definitions, the 6 modules and how they nest, and the position of
-   the top-level `open Utils`. newMap1 and exists1 follow a `type` item that is
-   not ended by `;;`, and must still be found. *)
+   Checked: the definitions and modules in the `expect` comments, how the
+   modules nest, and the position of the top-level `open Utils`. newMap1 and
+   exists1 follow a `type` item that is not ended by `;;`, and must still be
+   found. `Subst` (a functor application) and `Ordered` (a module type) are
+   not modules. *)
 
 (* Examples from metis.ml, firstorder.ml, thecops.ml *)
 
@@ -42,9 +44,12 @@ module Substlist : Substitution with type t = (int * iterm) list =
     end
 
 end
+(* expect: Utils.const Utils.Pair.mapn Utils.List.cons *)
+(* expect module: Utils Utils.Pair Utils.List Utils.Substlist *)
 
 let test_expr = 1;;
 let expr =;;
+(* expect: test_expr expr *)
 
 open Utils;;
 
@@ -68,3 +73,5 @@ module Mmap = struct
         let exists1 f = Ma.exists (fun k m -> f (k,m));;
     end
 end
+(* expect: Mmap.Make.newMap1 Mmap.Make.exists1 *)
+(* expect module: Mmap Mmap.Make *)
