@@ -6,7 +6,8 @@ import logging
 import re
 from dataclasses import dataclass
 
-from hol_language_server_core.parser.lexer import Lexer, LexerState, ParserError, Token, TokenType, line_number
+from hol_language_server_core.parser.lexer import (Lexer, LexerState, ParserError, Token, TokenType, end_position,
+                                                   line_number)
 from hol_language_server_core.parser.model import (CustomCommands, Definition, DefinitionType, Dependency, Module,
                                                    OpenDecl, ParseResult)
 from hol_language_server_core.parser.terms import declared_infixes, term_constants
@@ -745,9 +746,12 @@ class Parser(Lexer):
                 end = self.pos
                 while end > statement_token.start_pos and self.text[end - 1].isspace():
                     end -= 1
+                source_range = Range(statement_token.get_start_position(self._line_starts),
+                                     end_position(self._line_starts, end))
                 for found in definitions[first_definition:]:
                     found.source_start = statement_token.start_pos
                     found.source_end = end
+                    found.source_range = source_range
 
         if module_stack:
             for mod in module_stack:

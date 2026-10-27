@@ -51,6 +51,8 @@ class Definition:
         # the bindings of `let ... and ...`.
         self.source_start: int | None = None
         self.source_end: int | None = None
+        # The same item as lines and characters; the end is exclusive.
+        self.source_range: Range | None = None
         # Constants only: the OCaml name of the definition introducing it.
         self.defined_by: str | None = None
         self._file_path = file_path

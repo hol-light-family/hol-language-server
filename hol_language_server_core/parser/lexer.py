@@ -14,6 +14,12 @@ def line_number(line_starts: list[int], pos: int) -> int:
     return bisect_right(line_starts, pos) - 1
 
 
+def end_position(line_starts: list[int], end: int) -> Position:
+    # The end of text[:end], on the line of its last character.
+    line = line_number(line_starts, end - 1)
+    return Position(line, end - line_starts[line])
+
+
 def skip_comments(text: str, pos: int) -> int:
     """End offset of the comment starting at pos. Assumes pos is at `(*`."""
     n = len(text)
@@ -87,8 +93,7 @@ class Token:
 
     def get_end_position(self, line_starts: list[int]) -> Position:
         if self._end_position is None:
-            line = line_number(line_starts, self.end_pos - 1)
-            self._end_position = Position(line, self.end_pos - line_starts[line])
+            self._end_position = end_position(line_starts, self.end_pos)
         return self._end_position
 
 
