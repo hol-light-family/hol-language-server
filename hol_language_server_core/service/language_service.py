@@ -11,6 +11,7 @@ from hol_language_server_core.parser import OCAML_KEYWORDS, Definition, Module, 
 from hol_language_server_core.service.results import (DefinitionTarget, MissingLoad, Reference, SourceInfo,
                                                       SymbolInfo, definition_symbol, module_symbol)
 from hol_language_server_core.service.scope import bound_names, local_binding
+from hol_language_server_core.service.terms import hol_word_at, in_term
 from hol_language_server_core.service.tokens import REFERENCE_RE, is_name_start
 from hol_language_server_core.text import Position, Range, TextDoc, location
 
@@ -113,9 +114,38 @@ class HolLanguageService:
             return None
         return found
 
+    def term_constants(self, doc: TextDoc, position: Position) -> tuple[list[Definition], Range | None] | None:
+        """Inside a backquoted term, the HOL constants the name at the
+        position names, and the name's range. None outside terms and in an
+        `^` antiquotation, which names an OCaml value."""
+        if position.line < 0 or position.line >= doc.line_count:
+            return None
+        offset = doc.offset_at(position)
+        file = self.database.get_file_index(doc.path)
+        # Top-level items start outside terms: scan from the last one.
+        start = max((d.source_start for d in file.definitions
+                     if d.source_start is not None and d.source_start <= offset), default=0) if file else 0
+        if not in_term(doc.text, start, offset):
+            return None
+        line = doc.line_at(position.line)
+        span = hol_word_at(line, position.character)
+        if span is None:
+            return [], None
+        begin, end = span
+        # `^x`, but not the `^` of a type such as `real^N`.
+        if line[begin - 1:begin] == "^" and not re.match(r"[\w']", line[begin - 2:begin - 1]):
+            return None
+        word_range = Range(position.with_(character=begin), position.with_(character=end))
+        return self.database.find_constants(line[begin:end], doc.path), word_range
+
     def hover(self, doc: TextDoc, position: Position) -> tuple[str, Range | None] | None:
         """The statement of the definition at the position, else None.
-        None for local names: they have no statement."""
+        None for local names: they have no statement. Inside a term, the
+        statement of the definition of the HOL constant."""
+        constants = self.term_constants(doc, position)
+        if constants is not None:
+            found, word_range = constants
+            return (found[0].to_string(), word_range) if found else None
         word, word_range = util.get_word_at_position(doc, position)
         if not word:
             return None
@@ -132,8 +162,9 @@ class HolLanguageService:
         return None
 
     def definition(self, doc: TextDoc, position: Position) -> list[DefinitionTarget]:
-        """Go to Definition: the file named by a `needs` string, else the
-        definitions and modules the word at the position names."""
+        """Go to Definition: the file named by a `needs` string; inside a term,
+        the HOL constants the name names; else the definitions and modules
+        the word at the position names."""
         if position.line < 0 or position.line >= doc.line_count:
             return []
         imports = ["needs", "loads", "loadt", *self._settings.custom_commands.imports]
@@ -146,6 +177,9 @@ class HolLanguageService:
                 if loc is None:
                     return []
                 return [DefinitionTarget(loc.path, loc.range)]
+        constants = self.term_constants(doc, position)
+        if constants is not None:
+            return [DefinitionTarget(loc.path, loc.range) for loc in (c.get_location() for c in constants[0])]
         word, word_range = util.get_word_at_position(doc, position)
         if not word:
             return []

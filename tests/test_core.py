@@ -15,6 +15,7 @@ from hol_language_server_core.parser import (
     Parser,
     TokenType,
     parse_text,
+    term_constants,
 )
 from hol_language_server_core.service import HolLanguageService
 from hol_language_server_core.text import TextDoc
@@ -101,6 +102,51 @@ def test_time_prove_and_bindings_optional_parameters():
 def test_operator_bindings_are_indexed():
     assert parse_names("let (=/) x y = x;;") == ["=/:other:"]
     assert parse_names("let ( >>= ) m f = m;;") == [">>=:other:"]
+
+
+def test_term_constants_are_the_heads_of_definitions():
+    def heads(term: str, infixes: frozenset[str] = frozenset(), inductive: bool = False) -> list[str]:
+        return [name for name, _ in term_constants(term, set(infixes), inductive)]
+
+    # Prefix, typed, and bracketed heads, and one constant per name.
+    assert heads("fib 0 = 0 /\\ fib (n + 2) = fib n + fib (n + 1)") == ["fib"]
+    assert heads("(f:num->num) x = x") == ["f"]
+    assert heads("(vector l):A^N = lambda i. EL (i - 1) l") == ["vector"]
+    assert heads("(/\\) = \\p q. p") == ["/\\"]
+    # Clauses in brackets, under `!`, conditional, and with `<=>`.
+    assert heads("(!n. 0 + n = n) /\\ (!m n. SUC m + n = SUC (m + n))") == ["+"]
+    assert heads("!m n. m < n ==> f m n = 1") == ["f"]
+    assert heads("(EVEN 0 <=> T) /\\ (!n. EVEN (SUC n) <=> ~EVEN n)") == ["EVEN"]
+    # Infixes: declared, bound on the left, or symbols. Undeclared and with
+    # nothing bound, `x IN s` reads as x applied to IN and s.
+    assert heads("x IN s <=> s x") == ["x"]
+    assert heads("x IN s <=> s x", frozenset({"IN"})) == ["IN"]
+    assert heads("!s t. s INTER t = {x | x IN s /\\ x IN t}") == ["INTER"]
+    assert heads("(s:A->bool) <=_c t <=> ?f. T") == ["<=_c"]
+    # A `/\` or `==>` inside a binder on the right is not a clause.
+    assert heads("sqrt x = @y. y pow 2 = x /\\ &0 <= y") == ["sqrt"]
+    assert heads("p x <=> !y. y = x ==> q y") == ["p"]
+    # Inductive rules: the head of each conclusion.
+    assert heads("evens 0 /\\ (!n. evens n ==> evens (n + 2))", inductive=True) == ["evens"]
+
+
+def test_constants_are_read_from_definitions():
+    text = (
+        'parse_as_infix("divides_alt",(12,"right"));;\n'
+        "let D = new_definition `m divides_alt n <=> ?x. n = m * x`;;\n"
+        "let R = new_recursive_definition num_RECURSION `r 0 = 0 /\\ r (SUC n) = r n`;;\n"
+        "let A_RULES, A_INDUCT, A_CASES = new_inductive_definition `a 0 /\\ (!n. a n ==> a (SUC n))`;;\n"
+        "let T1 = prove(`r 0 = 0`, ARITH_TAC);;\n"
+    )
+    found = parse_text(text, "x.ml", CustomCommands()).constants
+    assert [(c.name, c.defined_by, text[c.offset:c.offset + len(c.name)]) for c in found] == [
+        ("divides_alt", "D", "divides_alt"), ("r", "R", "r"), ("a", "A_RULES", "a"),
+    ]
+    # The constants are not OCaml definitions.
+    assert parse_names(text) == ["D:definition:m divides_alt n <=> ?x. n = m * x",
+                                 "R:definition:r 0 = 0 /\\ r (SUC n) = r n",
+                                 "A_RULES:other:", "A_INDUCT:other:", "A_CASES:other:",
+                                 "T1:theorem:r 0 = 0"]
 
 
 def test_numeric_literals_are_not_identifiers():
