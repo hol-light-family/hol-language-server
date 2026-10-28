@@ -17,3 +17,12 @@ let MY_TAC =
 NOT_A_REFERENCE `ADD_SYM`" in
   fun th -> HELPER_TAC th
 let OTHER_TAC = MY_TAC ADD_SYM_ALT;;
+
+(* hover: th = ADD_SYM_ALT +5 =>
+Theorem `ADD_SYM_ALT`
+```
+`|- !m n. n + m = m + n`
+```
+*)
+(* goto: -> HELPER_TAC th +3 => let HELPER_TAC th +4 *)
+(* goto: REWRITE_TAC[th +12 => HELPER_TAC th +11 *)

@@ -1,11 +1,11 @@
 (* Loads.
    - `needs "lib/util.ml"` resolves: Go to Definition on the file name opens it.
-   - `needs "missing.ml"` does not: it is reported as a missing load.
+   - `needs` of missing.ml does not resolve: it is reported as a missing load.
    Checked: the document symbols are MY_THM and x. x calls a function that is
    defined nowhere. *)
 
 needs "lib/util.ml";;
-needs "missing.ml";;
+needs "missing.ml";; (* diagnostic: "missing.ml" => File not found: missing.ml *)
 
 let MY_THM = prove
  (`!n. EVEN n ==> EVEN (n + n)`,

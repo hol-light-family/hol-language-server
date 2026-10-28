@@ -5,7 +5,8 @@ import os
 from pathlib import Path
 
 import pytest
-from hol_server_paths import HOL, PROJECT
+from hol_server_paths import EXAMPLES, HOL, PROJECT
+from lookups import check_lookup_comments
 from hol_language_server_core.config import default_settings, expand_root_paths, parse_settings, settings_from_options
 from hol_language_server_core.parser import CustomCommands
 from hol_language_server_core.service import HolLanguageService
@@ -26,6 +27,13 @@ def tactics_doc(service: HolLanguageService) -> TextDoc:
     return service.get_document(path)
 
 
+def locals_doc(service: HolLanguageService) -> TextDoc:
+    path = os.path.join(PROJECT, "locals.ml")
+    service.index(path, True)
+    return service.get_document(path)
+
+
+# ======== Positions and words: offset round-trips, operator fallback. ========
 def test_positions_round_trip_through_offsets():
     doc = TextDoc("x.ml", "let A = 1;;\nlet BB =\n  2;;\n")
     assert doc.offset_at(Position(1, 4)) == len("let A = 1;;\nlet ")
@@ -43,6 +51,7 @@ def test_word_at_position_falls_back_to_operators():
     assert get_word_at_position(doc, Position(1, 0))[0] is None
 
 
+# ===== Hover and definition: scope, shadowing, lets, needs, conversions. =====
 def test_hover_shows_the_theorem_statement():
     service = example_service()
     doc = tactics_doc(service)
@@ -83,36 +92,11 @@ def test_definition_jumps_through_needs():
     assert target.path == os.path.join(PROJECT, "lib", "util.ml")
 
 
-def position_of(doc: TextDoc, text: str) -> Position:
-    """The position where `text` first occurs in the document."""
-    return doc.position_at(doc.text.index(text))
-
-
 def test_conversions_resolve_where_they_are_used():
     service = example_service()
     path = os.path.join(PROJECT, "conversions.ml")
     service.index(path, True)
-    doc = service.get_document(path)
-    # MY_CONV, defined on line 11 (0-based), where CONV_TAC and CONV_RULE use it.
-    for use in ("MY_CONV);;", "MY_CONV (ARITH_RULE"):
-        [target] = service.definition(doc, position_of(doc, use))
-        assert (target.path, target.range.start.line, target.range.start.character) == (path, 11, 4)
-        found = service.hover(doc, position_of(doc, use))
-        assert found is not None and found[0] == "*MY_CONV*"
-    # ADD_SYM_CONV, defined on line 9, where THENC combines it.
-    [target] = service.definition(doc, position_of(doc, "ADD_SYM_CONV THENC"))
-    assert (target.range.start.line, target.range.start.character) == (9, 4)
-    # The theorem a conversion is built from, and a theorem proved with one.
-    found = service.hover(doc, position_of(doc, "ADD_SYM_ALT]"))
-    assert found is not None and found[0] == "Theorem `ADD_SYM_ALT`\n```\n`|- !m n. n + m = m + n`\n```"
-    found = service.hover(doc, position_of(doc, "MY_CONV_THM"))
-    assert found is not None and found[0] == "Theorem `MY_CONV_THM`\n```\n`|- 1 + 2 = 3`\n```"
-
-
-def locals_doc(service: HolLanguageService) -> TextDoc:
-    path = os.path.join(PROJECT, "locals.ml")
-    service.index(path, True)
-    return service.get_document(path)
+    check_lookup_comments(service, service.get_document(path), EXAMPLES)
 
 
 def test_definition_of_a_let_in_name_is_its_binding():
@@ -136,31 +120,7 @@ def test_definition_of_a_parameter_is_the_parameter():
 def test_local_names_follow_scope():
     service = example_service()
     doc = locals_doc(service)
-
-    def at(snippet: str, skip: int = 0) -> int:
-        return doc.text.index(snippet) + skip
-
-    def jumps(offset: int) -> list[int]:
-        return [doc.offset_at(t.range.start) for t in service.definition(doc, doc.position_at(offset))]
-
-    # Shadowing: `let s = s + 1` uses the first s; the last s is the second.
-    assert jumps(at("s + 1")) == [at("s = 1 in")]
-    assert jumps(at("s;;")) == [at("s = s + 1")]
-    # A binding is its own definition.
-    assert jumps(at("s = 1 in")) == [at("s = 1 in")]
-    # A parameter is in scope in its body only; an outer parameter throughout.
-    assert jumps(at("q + p")) == [at("q = q + p")]
-    assert jumps(at("q + p", 4)) == [at("p =\n")]
-    assert jumps(at("inner q;;")) == [at("inner q =")]
-    assert jumps(at("inner q;;", 6)) == []
-    # An arm variable is in scope in its own arm only.
-    assert jumps(at("w -> w", 5)) == [at("w -> w")]
-    assert jumps(at("None -> w", 8)) == []
-    # A type in an annotation is not bound.
-    assert jumps(at("t;;")) == [at("t: term")]
-    assert jumps(at("term)")) == []
-    # Hover has nothing to show for a local name, rather than the top-level one.
-    assert service.hover(doc, doc.position_at(at("s;;"))) is None
+    check_lookup_comments(service, doc, EXAMPLES)
 
 
 def test_a_parameter_named_like_a_global_is_the_parameter():
@@ -177,74 +137,17 @@ def test_constants_in_terms_go_to_their_definition():
     service = example_service()
     path = os.path.join(PROJECT, "constants.ml")
     service.index(path, True)
-    doc = service.get_document(path)
-
-    def at(snippet: str, skip: int = 0) -> int:
-        return doc.text.index(snippet) + skip
-
-    def jumps(offset: int) -> list[tuple[str, int]]:
-        return [(t.path, service.get_document(t.path).offset_at(t.range.start))
-                for t in service.definition(doc, doc.position_at(offset))]
-
-    # Each kind of definition, used in another term: the head of its term.
-    assert jumps(at("fib 1 = 1")) == [(path, at("fib n = fibonacci"))]
-    assert jumps(at("fib3 1 = 1")) == [(path, at("fib3 0 = 0"))]
-    assert jumps(at("fibonacci n +")) == [(path, at("fibonacci 0 = 0"))]
-    assert jumps(at("divides_alt 4")) == [(path, at("divides_alt n <=>"))]
-    assert jumps(at("evens 4")) == [(path, at("evens 0 /\\"))]
-    hol = os.path.join(HOL, "hol.ml")
-    assert jumps(at("EVEN 4")) == [(hol, service.get_document(hol).text.index("EVEN n <=>"))]
-    # Variables go nowhere, also n, which is an OCaml value too.
-    assert jumps(at("fib n =", 4)) == []
-    assert jumps(at("fibonacci (n + 2)", 11)) == []
-    # Outside terms, names are OCaml names: FIB_DEF and fibonacci the theorems.
-    assert jumps(at("FIB_DEF;")) == [(path, at("FIB_DEF ="))]
-    assert jumps(at("fibonacci]")) == [(path, at("fibonacci = define"))]
-    # An antiquotation names an OCaml value.
-    assert jumps(at("^x_term", 1)) == [(path, at("x_term ="))]
-    found = service.hover(doc, doc.position_at(at("fib 1 = 1")))
-    assert found is not None
-    assert found[0] == "Constant `fib`, defined by `FIB_DEF`\n```\n`|- fib n = fibonacci n`\n```"
-    assert service.hover(doc, doc.position_at(at("fib n =", 4))) is None
+    check_lookup_comments(service, service.get_document(path), EXAMPLES)
 
 
-def test_a_bound_variable_named_like_a_constant_goes_nowhere(tmp_path: Path):
-    # Cut down from s2n-bignum arm/proofs/edwards25519_epadd.ml, where
-    # `!p3 p1 Q1 p2 Q2 pc stackpointer.` binds the names of two registers.
-    (tmp_path / "main.ml").write_text(
-        "let Q1 = define `Q1 = 1`;;\n"
-        "let TH = prove(`!Q1. Q1 = 2`, ALL_TAC);;\n"
-        "let SCOPED = `(!Q1. Q1 = 3) /\\ Q1 = 4`;;\n"
-        "let OTHERS = `(?!Q1:num. Q1 = 5) /\\ (\\Q1. Q1 + 6) = f /\\ [!(Q1:24 word). Q1 = 7; Q1 = 8]`;;\n"
-        "let CONJ = `x /\\ Q1 = 9 \\/ Q1 = 10`;;\n")
-    settings = default_settings()
-    settings.hol_path = HOL
-    settings.workspace = str(tmp_path)
-    service = HolLanguageService(settings)
-    path = str(tmp_path / "main.ml")
+def test_a_bound_variable_named_like_a_constant_goes_nowhere():
+    service = example_service()
+    path = os.path.join(PROJECT, "bound.ml")
     service.index(path, True)
-    doc = service.get_document(path)
-    constant = [(path, 0)]
-
-    def jumps(text: str) -> list[tuple[str, int]]:
-        return [(t.path, t.range.start.line) for t in service.definition(doc, position_of(doc, text))]
-
-    # In the binder's body and in the binder itself: the variable.
-    assert jumps("Q1 = 2") == []
-    assert jumps("Q1. Q1 = 2") == []
-    assert service.hover(doc, position_of(doc, "Q1 = 2")) is None
-    # The body ends at the bracket closing around the binder, or a list's `;`.
-    assert jumps("Q1 = 3") == []
-    assert jumps("Q1 = 4") == constant
-    assert jumps("Q1 = 7") == []
-    assert jumps("Q1 = 8") == constant
-    # `?!` and `\` bind; the `\` of `/\` and `\/` does not.
-    assert jumps("Q1 = 5") == []
-    assert jumps("Q1 + 6") == []
-    assert jumps("Q1 = 9") == constant
-    assert jumps("Q1 = 10") == constant
+    check_lookup_comments(service, service.get_document(path), EXAMPLES)
 
 
+# ================ Symbols: document order, predicate search. =================
 def test_document_symbols_are_position_ordered():
     service = example_service()
     path = os.path.join(PROJECT, "main.ml")
@@ -263,6 +166,7 @@ def test_search_symbols_matches_by_predicate():
     assert {"HELPER_TAC", "MY_TAC", "OTHER_TAC"} <= names
 
 
+# ======== Settings: options, rejections, root paths, custom commands. ========
 def test_settings_from_options_reads_the_section():
     base = default_settings()
     settings = settings_from_options(
@@ -320,7 +224,9 @@ def test_custom_commands_come_from_options_and_flags():
         parse_settings(["--custom-theorem", "a.b"], None)
 
 
+# =============== Loads: custom imports, missing-load coverage. ===============
 def test_definition_jumps_through_a_custom_import(tmp_path: Path):
+    # tmp_path: the helper name and custom settings must not leak into the shared workspace.
     (tmp_path / "lib.ml").write_text("let helper = 1;;\n")
     (tmp_path / "main.ml").write_text('my_needs "lib.ml";;\nlet x = helper;;\n')
     settings = default_settings()
@@ -338,6 +244,7 @@ def test_definition_jumps_through_a_custom_import(tmp_path: Path):
 
 
 def test_missing_loads_cover_the_files_it_loads(tmp_path: Path):
+    # tmp_path: deliberately broken files would pollute the shared workspace's pinned missing list.
     (tmp_path / "a.ml").write_text('needs "gone.ml";;\n')
     (tmp_path / "main.ml").write_text('needs "a.ml";;\nneeds "nope.ml";;\n')
     settings = default_settings()

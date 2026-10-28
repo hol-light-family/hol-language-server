@@ -29,6 +29,14 @@ def read_doc(*parts: str) -> TextDoc:
         return TextDoc(path, handle.read())
 
 
+def example_service() -> HolLanguageService:
+    settings = default_settings()
+    settings.hol_path = HOL
+    settings.workspace = PROJECT
+    return HolLanguageService(settings)
+
+
+# ======== Parser: what parse_text finds, and what it warns or skips. =========
 @pytest.mark.parametrize("name", ["definitions.ml", "modules.ml", "sources.ml"])
 def test_parser_finds_what_the_expect_comments_say(name: str):
     doc = read_doc(name)
@@ -165,6 +173,13 @@ def test_numeric_literals_are_not_identifiers():
     assert tokens == []
 
 
+def test_parser_warns_about_what_it_skips(caplog: pytest.LogCaptureFixture):
+    with caplog.at_level(logging.WARNING, logger="hol_language_server_core.parser"):
+        parse_text("open 5;;\n", "x.ml", CustomCommands())
+    assert [r.getMessage() for r in caplog.records] == ["Error: identifier expected x.ml:1:6"]
+
+
+# ======== Index and dependencies: database, workspace, and base HOL. =========
 def test_database_definitions_and_dependencies():
     doc = read_doc("definitions.ml")
     database = Database()
@@ -197,20 +212,6 @@ def test_database_definitions_and_dependencies():
     )
 
 
-def test_filter_map_and_difference():
-    assert filter_map([1, 2, 3, 4, 5], lambda x: x * 2 if x % 2 == 0 else None) == [4, 8]
-    assert filter_map([1, 2, 3, 4, 5], lambda x: None if x == 3 else x * 2) == [2, 4, 8, 10]
-    assert difference({1, 2, 3, 4}, [3, 4, 5]) == [1, 2]
-    assert difference([1, 2, 3], {1, 2, 3}) == []
-
-
-def example_service() -> HolLanguageService:
-    settings = default_settings()
-    settings.hol_path = HOL
-    settings.workspace = PROJECT
-    return HolLanguageService(settings)
-
-
 def test_indexing_resolves_dependencies_and_reports_unresolved():
     service = example_service()
     main_path = os.path.join(PROJECT, "main.ml")
@@ -219,6 +220,20 @@ def test_indexing_resolves_dependencies_and_reports_unresolved():
     assert service.database.is_base_hol_light_file(os.path.join(HOL, "hol.ml"))
 
 
+def test_indexing_a_workspace():
+    service = example_service()
+    assert [dep.name for dep in service.index_workspace()] == ["missing.ml"]
+    assert [os.path.basename(s.path) for s in service.find_symbols("USES_CONTEXT")] == ["ctx.ml"]
+
+
+def test_base_indexing_refuses_a_missing_or_wrong_hol_light_directory(tmp_path: Path):
+    with pytest.raises(ValueError, match="No HOL Light directory"):
+        Database().index_base_hol_light_files("", CustomCommands())
+    with pytest.raises(ValueError, match="no hol.ml"):
+        Database().index_base_hol_light_files(str(tmp_path), CustomCommands())
+
+
+# ============ Symbols: find by name, rank exact full names first. ============
 def test_symbols():
     service = example_service()
     service.index(os.path.join(PROJECT, "main.ml"), True)
@@ -246,23 +261,12 @@ def test_find_symbols_ranks_exact_full_name_first(tmp_path: Path):
     ]
 
 
-def test_indexing_a_workspace():
-    service = example_service()
-    assert [dep.name for dep in service.index_workspace()] == ["missing.ml"]
-    assert [os.path.basename(s.path) for s in service.find_symbols("USES_CONTEXT")] == ["ctx.ml"]
-
-
-def test_base_indexing_refuses_a_missing_or_wrong_hol_light_directory(tmp_path: Path):
-    with pytest.raises(ValueError, match="No HOL Light directory"):
-        Database().index_base_hol_light_files("", CustomCommands())
-    with pytest.raises(ValueError, match="no hol.ml"):
-        Database().index_base_hol_light_files(str(tmp_path), CustomCommands())
-
-
-def test_parser_warns_about_what_it_skips(caplog: pytest.LogCaptureFixture):
-    with caplog.at_level(logging.WARNING, logger="hol_language_server_core.parser"):
-        parse_text("open 5;;\n", "x.ml", CustomCommands())
-    assert [r.getMessage() for r in caplog.records] == ["Error: identifier expected x.ml:1:6"]
+# ========== Text and util: filter_map, difference, non-UTF8 input. ===========
+def test_filter_map_and_difference():
+    assert filter_map([1, 2, 3, 4, 5], lambda x: x * 2 if x % 2 == 0 else None) == [4, 8]
+    assert filter_map([1, 2, 3, 4, 5], lambda x: None if x == 3 else x * 2) == [2, 4, 8, 10]
+    assert difference({1, 2, 3, 4}, [3, 4, 5]) == [1, 2]
+    assert difference([1, 2, 3], {1, 2, 3}) == []
 
 
 def test_non_utf8_text_is_replaced_with_a_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture):

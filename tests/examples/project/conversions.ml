@@ -9,10 +9,29 @@ needs "lib/util.ml";;
 
 let ADD_SYM_CONV = REWRITE_CONV[ADD_SYM_ALT];;
 
+(* hover: ADD_SYM_ALT] =>
+Theorem `ADD_SYM_ALT`
+```
+`|- !m n. n + m = m + n`
+``` *)
+
 let MY_CONV = ADD_SYM_CONV THENC NUM_REDUCE_CONV;;
+
+(* goto: ADD_SYM_CONV THENC => ADD_SYM_CONV = *)
 
 let MY_CONV_THM = prove
  (`1 + 2 = 3`,
   CONV_TAC MY_CONV);;
 
+(* hover: MY_CONV_THM =>
+Theorem `MY_CONV_THM`
+```
+`|- 1 + 2 = 3`
+``` *)
+(* goto: MY_CONV);; => MY_CONV = *)
+(* hover: MY_CONV);; => *MY_CONV* *)
+
 let MY_RULE_THM = CONV_RULE MY_CONV (ARITH_RULE `2 + 1 = 3`);;
+
+(* goto: MY_CONV (ARITH_RULE => MY_CONV = *)
+(* hover: MY_CONV (ARITH_RULE => *MY_CONV* *)

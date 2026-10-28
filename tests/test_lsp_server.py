@@ -2,11 +2,14 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
+from hol_language_server_core.text import TextDoc
 from hol_server_paths import PROJECT
 
 SERVER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lsp_server.py")
@@ -74,6 +77,7 @@ class LspClient:
         self._send({"jsonrpc": "2.0", "method": method, "params": params})
 
 
+@contextmanager
 def start_server(hol: str) -> Iterator[tuple[LspClient, Any]]:
     proc = subprocess.Popen(
         [sys.executable, SERVER, "--hol-path", hol, "--workspace", PROJECT],
@@ -104,10 +108,95 @@ def start_server(hol: str) -> Iterator[tuple[LspClient, Any]]:
         proc.wait(timeout=30)
 
 
+_LOOKUP_RE = re.compile(r"\(\* (goto|hover): (.*?) =>\s+(.*?)\s+\*\)", re.DOTALL)
+
+
+def _parse_use(raw: str) -> tuple[str, int]:
+    """The snippet and the skip past it, as in `lookups.py`."""
+    text, plus, skip = raw.strip().rpartition(" +")
+    if plus and skip.isdigit():
+        return text, int(skip)
+    return raw.strip(), 0
+
+
+def check_lsp_lookup_comments(client: LspClient, path: str, text: str) -> None:
+    """Every goto and hover comment in the file holds over LSP.
+
+    The same comment format `lookups.py` checks at the service level,
+    driven through real hover and definition requests instead. The file
+    must already be open, and every target must be in this file: a
+    target elsewhere stays a hardcoded assertion in the test.
+    """
+    doc = TextDoc(path, text)
+    for match in _LOOKUP_RE.finditer(text):
+        kind, use_raw, payload_raw = match.group(1), match.group(2), match.group(3)
+        snippet, skip = _parse_use(use_raw)
+        offset = text.index(snippet) + skip
+        assert offset < match.start(), f"{snippet!r} first occurs inside or after its comment"
+        position = doc.position_at(offset)
+        params = {
+            "textDocument": {"uri": uri(path)},
+            "position": {"line": position.line, "character": position.character},
+        }
+        if kind == "goto":
+            if payload_raw.strip() == "nowhere":
+                assert client.request("textDocument/definition", params) == []
+                continue
+            target, target_skip = _parse_use(payload_raw)
+            [found] = client.request("textDocument/definition", params)
+            expected = doc.position_at(text.index(target) + target_skip)
+            assert found["uri"] == uri(path)
+            assert (found["range"]["start"]["line"], found["range"]["start"]["character"]) == (
+                expected.line,
+                expected.character,
+            )
+        elif payload_raw.strip() == "none":
+            assert client.request("textDocument/hover", params) is None
+        else:
+            hover = client.request("textDocument/hover", params)
+            assert hover is not None
+            assert hover["contents"]["value"] == payload_raw.strip()
+
+
+_DIAGNOSTIC_RE = re.compile(r"\(\* diagnostic: (.*?) =>\s+(.*?)\s+\*\)")
+
+
+def check_lsp_diagnostics(client: LspClient, path: str, text: str) -> None:
+    """Every diagnostic comment in the file matches what the server publishes.
+
+    The use snippet's own span is the expected range, so the comments list
+    every diagnostic the file publishes, in order. The file must already
+    be open; a documentSymbol request flushes past the published
+    diagnostics over ordered stdio. Severity and source are fixed here.
+    """
+    doc = TextDoc(path, text)
+    client.request("textDocument/documentSymbol", {"textDocument": {"uri": uri(path)}})
+    expected = []
+    for match in _DIAGNOSTIC_RE.finditer(text):
+        use_raw, message = match.group(1), match.group(2).strip()
+        snippet, skip = _parse_use(use_raw)
+        offset = text.index(snippet) + skip
+        assert offset < match.start(), f"{snippet!r} first occurs inside or after its comment"
+        start = doc.position_at(offset)
+        end = doc.position_at(offset + len(snippet))
+        expected.append(
+            {
+                "range": {
+                    "start": {"line": start.line, "character": start.character},
+                    "end": {"line": end.line, "character": end.character},
+                },
+                "message": message,
+                "severity": 2,
+                "source": "hol-language-server",
+            }
+        )
+    assert client.diagnostics(path) == expected
+
+
 def test_initialize_advertises_the_subset():
     from hol_server_paths import HOL
 
-    for _, result in start_server(HOL):
+    with start_server(HOL) as (_, result):
         capabilities = result["capabilities"]
         assert capabilities["hoverProvider"] is True
         assert capabilities["definitionProvider"] is True
@@ -118,27 +207,14 @@ def test_initialize_advertises_the_subset():
 def test_hover_definition_and_symbols():
     from hol_server_paths import HOL
 
-    for client, _ in start_server(HOL):
+    with start_server(HOL) as (client, _):
         with open(TACTICS, encoding="utf-8") as handle:
             text = handle.read()
         client.notify(
             "textDocument/didOpen",
             {"textDocument": {"uri": uri(TACTICS), "languageId": "ocaml", "version": 1, "text": text}},
         )
-        hover = client.request(
-            "textDocument/hover",
-            {"textDocument": {"uri": uri(TACTICS)}, "position": {"line": 12, "character": 20}},
-        )
-        assert hover["contents"]["value"] == (
-            "Theorem `ADD_SYM_ALT`\n```\n`|- !m n. n + m = m + n`\n```"
-        )
-
-        [target] = client.request(
-            "textDocument/definition",
-            {"textDocument": {"uri": uri(TACTICS)}, "position": {"line": 11, "character": 5}},
-        )
-        assert target["uri"] == uri(TACTICS)
-        assert (target["range"]["start"]["line"], target["range"]["start"]["character"]) == (11, 4)
+        check_lsp_lookup_comments(client, TACTICS, text)
 
         symbols = client.request(
             "textDocument/documentSymbol", {"textDocument": {"uri": uri(TACTICS)}}
@@ -180,21 +256,15 @@ def test_unresolved_loads_are_shown():
     from hol_server_paths import HOL
 
     main = os.path.join(PROJECT, "main.ml")
-    for client, _ in start_server(HOL):
+    with start_server(HOL) as (client, _):
         with open(main, encoding="utf-8") as handle:
             text = handle.read()
         client.notify(
             "textDocument/didOpen",
             {"textDocument": {"uri": uri(main), "languageId": "ocaml", "version": 1, "text": text}},
         )
-        client.request("textDocument/documentSymbol", {"textDocument": {"uri": uri(main)}})
+        check_lsp_diagnostics(client, main, text)
         assert client.warnings() == ["Loads not found in the workspace: missing.ml"]
-        assert client.diagnostics(main) == [{
-            "range": {"start": {"line": 7, "character": 6}, "end": {"line": 7, "character": 18}},
-            "message": "File not found: missing.ml",
-            "severity": 2,
-            "source": "hol-language-server",
-        }]
         assert client.diagnostics(os.path.join(PROJECT, "lib", "util.ml")) is None
         # Fixing the load clears the warning.
         client.notify(
