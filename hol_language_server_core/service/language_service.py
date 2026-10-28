@@ -11,7 +11,7 @@ from hol_language_server_core.parser import OCAML_KEYWORDS, Definition, Module, 
 from hol_language_server_core.service.results import (DefinitionTarget, MissingLoad, Reference, SourceInfo,
                                                       SymbolInfo, definition_symbol, module_symbol)
 from hol_language_server_core.service.scope import bound_names, local_binding
-from hol_language_server_core.service.terms import hol_word_at, in_term
+from hol_language_server_core.service.terms import bound_in_term, hol_word_at, term_start
 from hol_language_server_core.service.tokens import REFERENCE_RE, is_name_start
 from hol_language_server_core.text import Position, Range, TextDoc, location
 
@@ -125,7 +125,8 @@ class HolLanguageService:
         # Top-level items start outside terms: scan from the last one.
         start = max((d.source_start for d in file.definitions
                      if d.source_start is not None and d.source_start <= offset), default=0) if file else 0
-        if not in_term(doc.text, start, offset):
+        term = term_start(doc.text, start, offset)
+        if term is None:
             return None
         line = doc.line_at(position.line)
         span = hol_word_at(line, position.character)
@@ -136,7 +137,11 @@ class HolLanguageService:
         if line[begin - 1:begin] == "^" and not re.match(r"[\w']", line[begin - 2:begin - 1]):
             return None
         word_range = Range(position.with_(character=begin), position.with_(character=end))
-        return self.database.find_constants(line[begin:end], doc.path), word_range
+        word = line[begin:end]
+        # A variable the term binds hides a constant of its name.
+        if bound_in_term(doc.text, term, offset - position.character + begin, word):
+            return [], word_range
+        return self.database.find_constants(word, doc.path), word_range
 
     def hover(self, doc: TextDoc, position: Position) -> tuple[str, Range | None] | None:
         """The statement of the definition at the position, else None.

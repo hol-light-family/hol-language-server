@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 import pytest
+from expectations import check_expectations, read_expectations
 from hol_server_paths import EXAMPLES, HOL, PROJECT
 from hol_language_server_core.config import default_settings
 from hol_language_server_core.database import Database
@@ -28,32 +29,44 @@ def read_doc(*parts: str) -> TextDoc:
         return TextDoc(path, handle.read())
 
 
+def example_service() -> HolLanguageService:
+    settings = default_settings()
+    settings.hol_path = HOL
+    settings.workspace = PROJECT
+    return HolLanguageService(settings)
+
+
+# ======== Parser: what parse_text finds, and what it warns or skips. =========
+@pytest.mark.parametrize("name", ["definitions.ml", "modules.ml", "sources.ml"])
+def test_parser_finds_what_the_expect_comments_say(name: str):
+    doc = read_doc(name)
+    check_expectations(doc.text, parse_text(doc.text, doc.path, CustomCommands()))
+
+
+def test_expectations_are_read_in_order_with_kinds_and_sources():
+    definitions, modules = read_expectations(
+        "(* expect: a TH:theorem@2:1-3:9 *)\n(* expect module: M *)\n(* not one *)")
+    assert [(e.full_name, e.kind, e.source) for e in definitions] == [
+        ("a", DefinitionType.other, None), ("TH", DefinitionType.theorem, (2, 1, 3, 9))]
+    assert [e.full_name for e in modules] == ["M"]
+
+
 def test_parser_definitions():
     doc = read_doc("definitions.ml")
     result = parse_text(doc.text, doc.path, CustomCommands())
-    assert len(result.definitions) == 36
     assert len(result.dependencies) == 1
-    assert len(result.modules) == 0
     assert result.global_module.open_decls == []
-    assert (
-        len([d for d in result.definitions if d.def_type == DefinitionType.theorem])
-        == 1
-    )
 
 
 def test_parser_modules():
     doc = read_doc("modules.ml")
     result = parse_text(doc.text, doc.path, CustomCommands())
-    # vscode-hol-light finds 5: newMap1 and exists1 follow a `type`
+    # vscode-hol-light misses newMap1 and exists1: they follow a `type`
     # item which is not ended by `;;`.
-    assert len(result.definitions) == 7
     assert len(result.dependencies) == 0
-    assert len(result.modules) == 6
-    assert result.global_module.open_decls == [OpenDecl("Utils", 843, 853)]
+    open_at = doc.text.index("open Utils;;")
+    assert result.global_module.open_decls == [OpenDecl("Utils", open_at, open_at + len("open Utils"))]
     mods = result.modules
-    assert [m.full_name for m in mods] == [
-        "Utils", "Utils.Pair", "Utils.List", "Utils.Substlist", "Mmap", "Mmap.Make",
-    ]
     assert mods[0].modules == [mods[1], mods[2], mods[3]]
     assert all(mods[i + 1].start > mods[i].start for i in range(len(mods) - 1))
 
@@ -160,6 +173,25 @@ def test_numeric_literals_are_not_identifiers():
     assert tokens == []
 
 
+def test_definitions_in_comments_are_not_detected():
+    # Nested comments hold no definitions, and neither do our own
+    # lookup comments that name definitions.
+    assert parse_text("(*\nlet x = 3;; (* not a def of `x` *)\n*)\n", "x.ml", CustomCommands()).definitions == []
+    result = parse_text(
+        "let a = 1;;\n(* goto: -> HELPER_TAC th +3 => let HELPER_TAC th +4 *)\nlet b = 2;;\n",
+        "x.ml",
+        CustomCommands(),
+    )
+    assert [d.name for d in result.definitions] == ["a", "b"]
+
+
+def test_parser_warns_about_what_it_skips(caplog: pytest.LogCaptureFixture):
+    with caplog.at_level(logging.WARNING, logger="hol_language_server_core.parser"):
+        parse_text("open 5;;\n", "x.ml", CustomCommands())
+    assert [r.getMessage() for r in caplog.records] == ["Error: identifier expected x.ml:1:6"]
+
+
+# ======== Index and dependencies: database, workspace, and base HOL. =========
 def test_database_definitions_and_dependencies():
     doc = read_doc("definitions.ml")
     database = Database()
@@ -181,25 +213,15 @@ def test_database_definitions_and_dependencies():
     assert (
         len(database.find_definitions("const", all_deps, True, {utils_mod})) == 1
     )
-    assert database.find_definitions_and_modules("Pair", dep_path, 829) == ([], set())
-    assert database.find_definitions_and_modules("Pair", dep_path, 856) == (
+    # Pair is seen only after `open Utils`.
+    dep_text = read_doc("modules.ml").text
+    before_open = dep_text.index("let expr")
+    after_open = dep_text.index("module Mmap")
+    assert database.find_definitions_and_modules("Pair", dep_path, before_open) == ([], set())
+    assert database.find_definitions_and_modules("Pair", dep_path, after_open) == (
         [],
         {utils_mod.modules[0]},
     )
-
-
-def test_filter_map_and_difference():
-    assert filter_map([1, 2, 3, 4, 5], lambda x: x * 2 if x % 2 == 0 else None) == [4, 8]
-    assert filter_map([1, 2, 3, 4, 5], lambda x: None if x == 3 else x * 2) == [2, 4, 8, 10]
-    assert difference({1, 2, 3, 4}, [3, 4, 5]) == [1, 2]
-    assert difference([1, 2, 3], {1, 2, 3}) == []
-
-
-def example_service() -> HolLanguageService:
-    settings = default_settings()
-    settings.hol_path = HOL
-    settings.workspace = PROJECT
-    return HolLanguageService(settings)
 
 
 def test_indexing_resolves_dependencies_and_reports_unresolved():
@@ -210,6 +232,20 @@ def test_indexing_resolves_dependencies_and_reports_unresolved():
     assert service.database.is_base_hol_light_file(os.path.join(HOL, "hol.ml"))
 
 
+def test_indexing_a_workspace():
+    service = example_service()
+    assert [dep.name for dep in service.index_workspace()] == ["missing.ml"]
+    assert [os.path.basename(s.path) for s in service.find_symbols("USES_CONTEXT")] == ["ctx.ml"]
+
+
+def test_base_indexing_refuses_a_missing_or_wrong_hol_light_directory(tmp_path: Path):
+    with pytest.raises(ValueError, match="No HOL Light directory"):
+        Database().index_base_hol_light_files("", CustomCommands())
+    with pytest.raises(ValueError, match="no hol.ml"):
+        Database().index_base_hol_light_files(str(tmp_path), CustomCommands())
+
+
+# ============ Symbols: find by name, rank exact full names first. ============
 def test_symbols():
     service = example_service()
     service.index(os.path.join(PROJECT, "main.ml"), True)
@@ -237,23 +273,22 @@ def test_find_symbols_ranks_exact_full_name_first(tmp_path: Path):
     ]
 
 
-def test_indexing_a_workspace():
+def test_definitions_in_comments_are_not_indexed(tmp_path: Path):
+    # tmp_path: a two-line synthetic probe, not a lookup case.
+    path = tmp_path / "comment_defs.ml"
+    path.write_text("(* let ghost = 1;; *)\nlet real = 1;;\n", encoding="utf-8")
     service = example_service()
-    assert [dep.name for dep in service.index_workspace()] == ["missing.ml"]
-    assert [os.path.basename(s.path) for s in service.find_symbols("USES_CONTEXT")] == ["ctx.ml"]
+    service.index(str(path), True)
+    assert service.find_symbols("ghost") == []
+    assert [s.full_name for s in service.find_symbols("real")] == ["real"]
 
 
-def test_base_indexing_refuses_a_missing_or_wrong_hol_light_directory(tmp_path: Path):
-    with pytest.raises(ValueError, match="No HOL Light directory"):
-        Database().index_base_hol_light_files("", CustomCommands())
-    with pytest.raises(ValueError, match="no hol.ml"):
-        Database().index_base_hol_light_files(str(tmp_path), CustomCommands())
-
-
-def test_parser_warns_about_what_it_skips(caplog: pytest.LogCaptureFixture):
-    with caplog.at_level(logging.WARNING, logger="hol_language_server_core.parser"):
-        parse_text("open 5;;\n", "x.ml", CustomCommands())
-    assert [r.getMessage() for r in caplog.records] == ["Error: identifier expected x.ml:1:6"]
+# ========== Text and util: filter_map, difference, non-UTF8 input. ===========
+def test_filter_map_and_difference():
+    assert filter_map([1, 2, 3, 4, 5], lambda x: x * 2 if x % 2 == 0 else None) == [4, 8]
+    assert filter_map([1, 2, 3, 4, 5], lambda x: None if x == 3 else x * 2) == [2, 4, 8, 10]
+    assert difference({1, 2, 3, 4}, [3, 4, 5]) == [1, 2]
+    assert difference([1, 2, 3], {1, 2, 3}) == []
 
 
 def test_non_utf8_text_is_replaced_with_a_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture):

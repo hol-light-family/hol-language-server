@@ -11,7 +11,12 @@ let fibonacci = define
  `fibonacci 0 = 0 /\ fibonacci 1 = 1 /\
   fibonacci (n + 2) = fibonacci n + fibonacci (n + 1)`;;
 
+(* goto: fibonacci n + => fibonacci 0 = 0 *)
+(* goto: fibonacci (n + 2) +11 => nowhere *)
+
 let FIB_DEF = new_definition `fib n = fibonacci n`;;
+
+(* hover: fib n = +4 => none *)
 
 let FIB3 = new_recursive_definition num_RECURSION
   `fib3 0 = 0 /\ fib3 (SUC n) = fib3 n + 1`;;
@@ -27,6 +32,21 @@ let FIB_1 = prove
  (`fib 1 = 1 /\ fib3 1 = 1`,
   REWRITE_TAC[FIB_DEF; fibonacci]);;
 
+(* goto: fib 1 = 1 => fib n = fibonacci *)
+(* goto: fib3 1 = 1 => fib3 0 = 0 *)
+(* goto: FIB_DEF; => FIB_DEF = *)
+(* goto: fibonacci] => fibonacci = define *)
+(* hover: fib 1 = 1 =>
+Constant `fib`, defined by `FIB_DEF`
+```
+`|- fib n = fibonacci n`
+``` *)
+
 let x_term = `x:num`;;
 
 let USES = `2 divides_alt 4 /\ evens 4 /\ EVEN 4 /\ fib ^x_term = 1`;;
+
+(* goto: divides_alt 4 => divides_alt n <=> *)
+(* goto: evens 4 => evens 0 /\ *)
+(* goto: EVEN 4 => EVEN n <=> @hol/hol.ml *)
+(* goto: fib ^x_term +5 => x_term = *)

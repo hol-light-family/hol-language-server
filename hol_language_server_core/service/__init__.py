@@ -18,7 +18,7 @@ from hol_language_server_core.service.results import (
     module_symbol,
 )
 from hol_language_server_core.service.scope import bound_names, local_binding
-from hol_language_server_core.service.terms import hol_word_at, in_term
+from hol_language_server_core.service.terms import bound_in_term, hol_word_at, term_start
 
 __all__ = [
     "DefinitionTarget",
@@ -27,11 +27,12 @@ __all__ = [
     "Reference",
     "SourceInfo",
     "SymbolInfo",
+    "bound_in_term",
     "bound_names",
     "definition_symbol",
     "hol_word_at",
-    "in_term",
     "local_binding",
     "module_symbol",
     "resolve_path",
+    "term_start",
 ]

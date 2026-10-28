@@ -22,10 +22,20 @@ let SHADOW =
   let s = s + 1 in
   s;;
 
+(* goto: s + 1 => s = 1 in *)
+(* goto: s;; => s = s + 1 *)
+(* goto: s = 1 in => s = 1 in *)
+(* hover: s;; => none *)
+
 (* q is inner's parameter only inside inner: after `in` it is unbound. *)
 let SCOPE_END p =
   let inner q = q + p in
   inner q;;
+
+(* goto: q + p => q = q + p *)
+(* goto: q + p +4 => p = *)
+(* goto: inner q;; => inner q = *)
+(* goto: inner q;; +6 => nowhere *)
 
 (* w is bound in its own arm only, not in the next one. *)
 let ARMS v =
@@ -33,5 +43,11 @@ let ARMS v =
     Some w -> w
   | None -> w;;
 
+(* goto: w -> w +5 => w -> w *)
+(* goto: None -> w +8 => nowhere *)
+
 (* `term` in the annotation is a type, not a parameter. *)
 let TYPED (t: term) = t;;
+
+(* goto: t;; => t: term *)
+(* goto: term) => nowhere *)

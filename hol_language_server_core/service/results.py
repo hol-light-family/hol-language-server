@@ -22,6 +22,8 @@ class SymbolInfo:
     # Definitions only: offsets of the whole item defining the name.
     source_start: int | None = None
     source_end: int | None = None
+    # The same item as lines and characters; the end is exclusive.
+    source_range: Range | None = None
     # Modules only.
     end_position: Position | None = None
     # The full name of the enclosing module.
@@ -66,6 +68,7 @@ def definition_symbol(defn: Definition) -> SymbolInfo:
         content=defn.content or None,
         source_start=defn.source_start,
         source_end=defn.source_end,
+        source_range=defn.source_range,
         position=defn.position,
         container=defn.module.full_name if defn.module is not None else None,
     )
