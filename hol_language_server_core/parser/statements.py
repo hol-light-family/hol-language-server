@@ -1,197 +1,21 @@
-"""OCaml-subset parser for HOL Light sources.
-
-Finds `needs`/`loads`/`loadt` dependencies, `prove`-style theorems,
-`new_definition`-style constant definitions, other `let` bindings, and
-`module`/`open`/`include` structure. Everything else is skipped.
-"""
+"""The parser: top-level statements, `let` bindings, and modules."""
 
 from __future__ import annotations
 
 import logging
 import re
-from bisect import bisect_right
-from dataclasses import dataclass, field
-from enum import IntEnum
+from dataclasses import dataclass
 
-from hol_language_server_core.text import CHAR_LITERAL, Location, Position, Range, location
+from hol_language_server_core.parser.lexer import Lexer, LexerState, ParserError, Token, TokenType
+from hol_language_server_core.parser.model import (CustomCommands, Definition, DefinitionType, Dependency, Module,
+                                                   OpenDecl, ParseResult)
+from hol_language_server_core.text import CHAR_LITERAL, Position, Range
 
 logger = logging.getLogger(__name__)
 
 
-class Dependency:
-    def __init__(self, name: str, hol_light_relative: bool, name_range: Range) -> None:
-        self.name = name
-        # Resolve relative to the HOL Light base directory, not the
-        # workspace roots, when the loader is `loads`.
-        self.hol_light_relative = hol_light_relative
-        # The quoted file name in the source.
-        self.range = name_range
-
-
-class DefinitionType(IntEnum):
-    theorem = 0
-    definition = 1
-    term = 2
-    other = 3
-
-
-DEFINITION_TYPE_NAMES = {
-    DefinitionType.theorem: "theorem",
-    DefinitionType.definition: "definition",
-    DefinitionType.term: "term",
-    DefinitionType.other: "value",
-}
-
-
-def _find_line_number(line_starts: list[int], pos: int) -> int:
-    return bisect_right(line_starts, pos) - 1
-
-
-def skip_comments(text: str, pos: int) -> int:
-    """End offset of the comment starting at pos. Assumes pos is at `(*`."""
-    n = len(text)
-    level = 1
-    i = pos + 1
-    while i < n:
-        i = text.find("*", i + 1)
-        if i < 0:
-            return n
-        if text[i - 1] == "(":
-            level += 1
-        elif i + 1 < n and text[i + 1] == ")":
-            level -= 1
-            if level <= 0:
-                return i + 2
-            i += 1
-    return n
-
-
-class Definition:
-    def __init__(self, name: str, def_type: DefinitionType, content: str, module: Module | None,
-                 offset: int, file_path: str, position: Position) -> None:
-        self.name = name
-        self.def_type = def_type
-        self.content = content
-        self.module = module
-        # Offset of the name token in the file text.
-        self.offset = offset
-        self.position = position
-        # The whole item which defines this name (`let ... ;;`), shared by
-        # the bindings of `let ... and ...`.
-        self.source_start: int | None = None
-        self.source_end: int | None = None
-        self._file_path = file_path
-
-    def get_file_path(self) -> str:
-        return self._file_path
-
-    def get_location(self) -> Location:
-        return location(self._file_path, self.position)
-
-    @property
-    def full_name(self) -> str:
-        if self.module is not None:
-            return self.module.full_name + "." + self.name
-        return self.name
-
-    def to_string(self) -> str:
-        if self.def_type == DefinitionType.theorem:
-            return f"Theorem `{self.name}`\n```\n`|- {self.content}`\n```"
-        if self.def_type == DefinitionType.definition:
-            return f"Definition `{self.name}`\n```\n`|- {self.content}`\n```"
-        if self.def_type == DefinitionType.term:
-            return "```\n`" + self.content + "`\n```"
-        text = f"*{self.name}*"
-        if self.content:
-            # content represents type
-            text += f" : {self.content}"
-        return text
-
-
-@dataclass
-class OpenDecl:
-    name: str
-    # Offsets of the `open`/`include` statement and of the end of the name.
-    start: int
-    end: int
-
-
-class Module:
-    def __init__(self, name: str, parent: Module | None, start: int, file_path: str,
-                 position: Position) -> None:
-        self.parent = parent
-        self.name = name
-        self.full_name = (
-            parent.full_name + "." + name if parent is not None else name
-        )
-        # Offset of the module name token in the file text.
-        self.start = start
-        self.end: int | None = None
-        self.position = position
-        self.end_position: Position | None = None
-        self._file_path = file_path
-        self.modules: list[Module] = []
-        self.open_decls: list[OpenDecl] = []
-        self.include_decls: list[OpenDecl] = []
-
-    def get_file_path(self) -> str:
-        return self._file_path
-
-    def get_location(self) -> Location:
-        return location(self._file_path, self.position)
-
-    def to_string(self) -> str:
-        return f"Module `{self.full_name}`"
-
-
-@dataclass
-class ParseResult:
-    definitions: list[Definition]
-    # Modules sorted by their start position.
-    modules: list[Module]
-    dependencies: list[Dependency]
-    # Tracks all open and include statements. Holds no definitions or modules.
-    global_module: Module
-
-
-@dataclass
-class CustomCommands:
-    # A project's own command names, read like the built-in ones they stand for.
-    # Import commands (like `needs`)
-    imports: list[str] = field(default_factory=list)
-    # Theorem commands (like `prove`)
-    theorems: list[str] = field(default_factory=list)
-    # Constant definition commands (like `new_definition`)
-    definitions: list[str] = field(default_factory=list)
-
-
 def parse_text(text: str, file_path: str, custom: CustomCommands) -> ParseResult:
     return Parser(text, custom).parse(file_path)
-
-
-class TokenType(IntEnum):
-    eof = 0
-    comment = 1
-    string = 2
-    term = 3
-    statement_separator = 4
-    operator = 5
-    identifier = 6
-    other = 7
-
-
-_TOKEN_RE = re.compile(
-    CHAR_LITERAL
-    + r"|\(\*"
-    + r"|[" + '"' + r"`'()\],{}]"
-    + r"|\[\|?|\|\]"
-    + r"|[-+*/#><=!?~%&$^@:.|]+"
-    + r"|;+"
-    + r"|[_a-zA-Z][\w'.]*"
-    + r"|\d[\w'.]*"
-)
-
-_OPERATOR_CHARS = set("-+*/#><=!?~%&$^@:.|")
 
 
 def _skip_re(search_module_end: bool) -> re.Pattern[str]:
@@ -203,45 +27,6 @@ def _skip_re(search_module_end: bool) -> re.Pattern[str]:
 
 _SKIP_RE = {True: _skip_re(True), False: _skip_re(False)}
 
-OCAML_KEYWORDS = set(
-    "and as assert asr begin class constraint do done downto else end "
-    "exception external false for fun function functor if in include inherit "
-    "initializer land lazy let lor lsl lsr lxor match method mod module mutable "
-    "new nonrec object of open or private rec sig struct then to true try type "
-    "val virtual when while with".split()
-)
-
-
-class Token:
-    def __init__(self, token_type: TokenType, start: int, end: int, value: str | None = None) -> None:
-        self.type = token_type
-        self.value = value
-        self.start_pos = start
-        self.end_pos = end
-        self._start_position: Position | None = None
-        self._end_position: Position | None = None
-
-    def get_value(self, text: str) -> str:
-        return self.value if self.value is not None else text[self.start_pos:self.end_pos]
-
-    def get_start_position(self, line_starts: list[int]) -> Position:
-        if self._start_position is None:
-            line = _find_line_number(line_starts, self.start_pos)
-            self._start_position = Position(line, self.start_pos - line_starts[line])
-        return self._start_position
-
-    def get_end_position(self, line_starts: list[int]) -> Position:
-        if self._end_position is None:
-            line = _find_line_number(line_starts, self.end_pos - 1)
-            self._end_position = Position(line, self.end_pos - line_starts[line])
-        return self._end_position
-
-
-class ParserError(Exception):
-    def __init__(self, message: str, token: Token | None = None) -> None:
-        super().__init__(message)
-        self.token = token
-
 
 @dataclass
 class Binding:
@@ -249,23 +34,9 @@ class Binding:
     type: str = ""
 
 
-@dataclass
-class _ParserState:
-    pos: int
-    cur_token: Token | None = None
-
-
-class Parser:
+class Parser(Lexer):
     def __init__(self, text: str, custom: CustomCommands) -> None:
-        self.text = text
-        self.eof_token = Token(TokenType.eof, len(text), len(text), "")
-        self._line_starts: list[int] = []
-        i = 0
-        while True:
-            self._line_starts.append(i)
-            i = text.find("\n", i) + 1
-            if i <= 0:
-                break
+        super().__init__(text)
 
         def mk(words: list[str]) -> re.Pattern[str]:
             return re.compile("^(?:" + "|".join(words) + ")$")
@@ -274,87 +45,6 @@ class Parser:
         self._theorem_re = mk(["prove", "VECTOR_ARITH", "ARITH_RULE", "REAL_ARITH", *custom.theorems])
         self._definition_re = mk(["new_definition", "new_basic_definition", "define", *custom.definitions])
         self._def_other_re = mk(["new_recursive_definition"])
-
-        self.pos = 0
-        self._cur: Token | None = None
-
-    def reset_state(self, state: _ParserState) -> None:
-        self.pos = state.pos
-        self._cur = state.cur_token
-
-    def save_state(self) -> _ParserState:
-        return _ParserState(self.pos, self._cur)
-
-    def peek(self) -> Token:
-        if self._cur is None:
-            self._cur = self.next_token()
-        return self._cur
-
-    def next_token(self) -> Token:
-        if self._cur is not None:
-            res = self._cur
-            self._cur = None
-            return res
-        m = _TOKEN_RE.search(self.text, self.pos)
-        if m is None:
-            self.pos = len(self.text)
-            return self.eof_token
-        tok = m.group(0)
-        if tok == "(*":
-            return self._parse_comment(m.start())
-        if tok == '"':
-            return self._parse_string(m.start())
-        if tok == "`":
-            return self._parse_term(m.start())
-        self.pos = m.end()
-        if tok.startswith(";;"):
-            kind = TokenType.statement_separator
-        elif tok[0] == "_" or "a" <= tok[0] <= "z" or "A" <= tok[0] <= "Z":
-            kind = TokenType.identifier
-        elif tok != "|]" and tok[0] in _OPERATOR_CHARS:
-            kind = TokenType.operator
-        else:
-            kind = TokenType.other
-        return Token(kind, m.start(), self.pos, tok)
-
-    def _parse_comment(self, pos: int) -> Token:
-        pattern = re.compile(r"\(\*|\*\)")
-        p = pos + 2
-        level = 1
-        while True:
-            m = pattern.search(self.text, p)
-            if m is None:
-                break
-            if m.group(0) == "(*":
-                level += 1
-            elif level - 1 <= 0:
-                level = 0
-                self.pos = m.end()
-                return Token(TokenType.comment, pos, self.pos)
-            else:
-                level -= 1
-            p = m.end()
-        self.pos = len(self.text)
-        return Token(TokenType.comment, pos, self.pos)
-
-    def _parse_string(self, pos: int) -> Token:
-        pattern = re.compile(r'"|\\.')
-        p = pos + 1
-        while True:
-            m = pattern.search(self.text, p)
-            if m is None:
-                break
-            if m.group(0) == '"':
-                self.pos = m.end()
-                return Token(TokenType.string, pos, self.pos)
-            p = m.end()
-        self.pos = len(self.text)
-        return Token(TokenType.string, pos, self.pos)
-
-    def _parse_term(self, pos: int) -> Token:
-        end = self.text.find("`", pos + 1)
-        self.pos = len(self.text) if end < 0 else end + 1
-        return Token(TokenType.term, pos, self.pos)
 
     def skip_to_next_statement(self, search_module_end: bool, item_indent: int) -> None:
         # The next call skips the current token. Do not check for `module`
@@ -445,39 +135,6 @@ class Parser:
                     depth -= 1
         finally:
             self.reset_state(saved)
-
-    def skip_comments(self) -> None:
-        while self.peek().type == TokenType.comment:
-            self.next_token()
-
-    def peek_skip_comments(self) -> Token:
-        self.skip_comments()
-        return self.peek()
-
-    def next_skip_comments(self) -> Token:
-        self.skip_comments()
-        return self.next_token()
-
-    def expect(self, value: str | TokenType) -> Token:
-        token = self.next_skip_comments()
-        if isinstance(value, str):
-            ok = token.value == value
-        else:
-            ok = token.type == value
-        if not ok:
-            raise ParserError(f"{value if isinstance(value, str) else value.name} expected", token)
-        return token
-
-    def match1(self, value: str | TokenType) -> Token | None:
-        """Consume the next non-comment token when it matches; else None."""
-        token = self.peek_skip_comments()
-        if isinstance(value, str):
-            ok = token.value == value
-        else:
-            ok = token.type == value
-        if ok:
-            return self.next_token()
-        return None
 
     def _parse_type(self, allow_comma: bool = False) -> str:
         def atom() -> str:
@@ -823,14 +480,14 @@ class Parser:
             raise ParserError("= expected after a module declaration", token)
         return name_token if self._parse_module_expr() else None
 
-    def _find_top_level_ands(self) -> list[_ParserState]:
+    def _find_top_level_ands(self) -> list[LexerState]:
         """States after each `and` starting a new binding of this `let`.
 
         Finds `and` tokens not nested in brackets, `begin ... end`, or inner
         `let ... in` expressions. The parser state is not changed.
         """
         saved = self.save_state()
-        result: list[_ParserState] = []
+        result: list[LexerState] = []
         depth = 0
         let_depth = 0
         while True:
@@ -861,10 +518,6 @@ class Parser:
         definitions.append(
             Definition(name, def_type, content, module, offset, uri, position)
         )
-
-    def _skip_while_eq(self, value: str) -> None:
-        while self.peek_skip_comments().value == value:
-            self.next_token()
 
     def _parse_binding(self, uri: str, definitions: list[Definition],
                        module_stack: list[Module]) -> None:

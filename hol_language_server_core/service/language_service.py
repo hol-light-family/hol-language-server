@@ -1,165 +1,18 @@
-"""Static lookup over HOL Light sources. The MCP server is a thin layer over it."""
+"""Static lookup over HOL Light sources. The servers are thin layers over it."""
 
 import os
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
 
 from hol_language_server_core import util
 from hol_language_server_core.config import Settings, expand_root_paths
 from hol_language_server_core.database import Database, Dependency
-from hol_language_server_core.parser import DEFINITION_TYPE_NAMES, OCAML_KEYWORDS, Definition, Module, skip_comments
-from hol_language_server_core.text import CHAR_LITERAL, Position, Range, TextDoc
-
-
-@dataclass
-class SymbolInfo:
-    name: str
-    # Qualified with module names.
-    full_name: str
-    kind: str  # theorem, definition, term, value, or module
-    path: str
-    # Offset of the name in the file text.
-    offset: int
-    position: Position
-    # The term of a theorem, definition, or term; the type of a value.
-    content: str | None = None
-    # Definitions only: offsets of the whole item defining the name.
-    source_start: int | None = None
-    source_end: int | None = None
-    # Modules only.
-    end_position: Position | None = None
-    # The full name of the enclosing module.
-    container: str | None = None
-
-
-@dataclass
-class DefinitionTarget:
-    path: str
-    range: Range
-
-
-@dataclass
-class MissingLoad:
-    # The file name as written, and where it is written.
-    name: str
-    range: Range
-
-
-@dataclass
-class SourceInfo:
-    doc: TextDoc
-    start: int
-    end: int
-
-
-@dataclass
-class Reference:
-    # The name as written in the source.
-    name: str
-    # What the name refers to there (as Go to Definition).
-    symbols: list[SymbolInfo]
-
-
-# Comments match by their opening only (they nest).
-_REFERENCE_RE = re.compile(
-    r"\(\*"
-    + r'|"(?:[^"\\]|\\[\s\S])*"'
-    + r"|`[^`]*`"
-    + r"|" + CHAR_LITERAL
-    + r"|\d[\w'.]*"
-    + r"|[A-Za-z_][\w']*(?:\.[A-Za-z_][\w']*)*"
-)
-
-# Tokens for binding positions: REFERENCE_RE plus pattern punctuation.
-_BINDER_RE = re.compile(_REFERENCE_RE.pattern + r"|->|\|\||[|=()[\]{};]")
-
-# Where each binding construct's patterns end.
-_BINDER_ENDS = {
-    "let": "=", "and": "=", "for": "=",
-    "fun": "->", "function": "->", "with": "->", "|": "->",
-}
-_BINDER_STOPS = {"in", "let", "then", "else", "do", ";", ";;"}
-_MAX_BINDER_TOKENS = 40
-
-
-def _is_name_start(word: str) -> bool:
-    return word[:1] == "_" or "a" <= word[:1] <= "z" or "A" <= word[:1] <= "Z"
-
-
-def bound_names(text: str, start: int, end: int) -> set[str]:
-    """Names bound by `let`, `and`, `fun`, `function`, `for`, and match or
-    try arms in text[start, end). A heuristic, not scope analysis: a name
-    bound anywhere in the range counts as bound everywhere in it."""
-    bound: set[str] = set()
-    pending: list[str] | None = None
-    terminator = ""
-    depth = 0
-    count = 0
-    pos = start
-    while True:
-        m = _BINDER_RE.search(text, pos)
-        if m is None or m.start() >= end:
-            break
-        tok = m.group(0)
-        pos = m.end()
-        if tok == "(*":
-            pos = skip_comments(text, m.start())
-            continue
-        if pending is not None:
-            if depth == 0 and tok == terminator:
-                bound.update(pending)
-                pending = None
-                continue
-            count += 1
-            if (
-                count > _MAX_BINDER_TOKENS
-                or (depth == 0 and tok in _BINDER_STOPS)
-                or (depth == 0 and tok == ")")
-            ):
-                pending = None
-            else:
-                if tok in ("(", "[", "{"):
-                    depth += 1
-                elif tok in (")", "]", "}"):
-                    depth -= 1
-                elif _is_name_start(tok) and tok not in OCAML_KEYWORDS:
-                    pending.append(tok)
-                continue
-        if tok in _BINDER_ENDS:
-            pending = []
-            terminator = _BINDER_ENDS[tok]
-            depth = 0
-            count = 0
-    return bound
-
-
-def definition_symbol(defn: Definition) -> SymbolInfo:
-    return SymbolInfo(
-        name=defn.name,
-        full_name=defn.full_name,
-        kind=DEFINITION_TYPE_NAMES[defn.def_type],
-        path=defn.get_file_path(),
-        offset=defn.offset,
-        content=defn.content or None,
-        source_start=defn.source_start,
-        source_end=defn.source_end,
-        position=defn.position,
-        container=defn.module.full_name if defn.module is not None else None,
-    )
-
-
-def module_symbol(mod: Module) -> SymbolInfo:
-    return SymbolInfo(
-        name=mod.name,
-        full_name=mod.full_name,
-        kind="module",
-        path=mod.get_file_path(),
-        offset=mod.start,
-        position=mod.position,
-        end_position=mod.end_position,
-        container=mod.parent.full_name if mod.parent is not None else None,
-    )
+from hol_language_server_core.parser import OCAML_KEYWORDS, Definition, Module, skip_comments
+from hol_language_server_core.service.results import (DefinitionTarget, MissingLoad, Reference, SourceInfo,
+                                                      SymbolInfo, definition_symbol, module_symbol)
+from hol_language_server_core.service.scope import bound_names, local_binding
+from hol_language_server_core.service.tokens import REFERENCE_RE, is_name_start
+from hol_language_server_core.text import Position, Range, TextDoc, location
 
 
 class HolLanguageService:
@@ -240,10 +93,33 @@ class HolLanguageService:
             symbols.sort(key=lambda s: s.full_name != name)
         return symbols
 
+    def local_binding(self, doc: TextDoc, word: str, word_range: Range | None) -> int | None:
+        """Offset of the local binding (`let ... in`, a parameter, an arm
+        variable) that the word at word_range names, else None. Names that
+        are top-level definitions are left to the index."""
+        if word_range is None or "." in word or not is_name_start(word) or word in OCAML_KEYWORDS:
+            return None
+        file = self.database.get_file_index(doc.path)
+        if file is None:
+            return None
+        offset = doc.offset_at(word_range.start)
+        item = next((d for d in file.definitions
+                     if d.source_start is not None and d.source_end is not None
+                     and d.source_start <= offset < d.source_end), None)
+        if item is None or item.source_start is None:
+            return None
+        found = local_binding(doc.text, item.source_start, offset, word)
+        if found is None or any(d.offset == found for d in file.definitions):
+            return None
+        return found
+
     def hover(self, doc: TextDoc, position: Position) -> tuple[str, Range | None] | None:
-        """The statement of the definition at the position, else None."""
+        """The statement of the definition at the position, else None.
+        None for local names: they have no statement."""
         word, word_range = util.get_word_at_position(doc, position)
         if not word:
+            return None
+        if self.local_binding(doc, word, word_range) is not None:
             return None
         defs, mods = self.database.find_definitions_and_modules(
             word, doc.path, doc.offset_at(position)
@@ -270,9 +146,13 @@ class HolLanguageService:
                 if loc is None:
                     return []
                 return [DefinitionTarget(loc.path, loc.range)]
-        word, _ = util.get_word_at_position(doc, position)
+        word, word_range = util.get_word_at_position(doc, position)
         if not word:
             return []
+        local = self.local_binding(doc, word, word_range)
+        if local is not None:
+            loc = location(doc.path, doc.position_at(local))
+            return [DefinitionTarget(loc.path, loc.range)]
         defs, mods = self.database.find_definitions_and_modules(
             word, doc.path, doc.offset_at(position)
         )
@@ -334,7 +214,7 @@ class HolLanguageService:
 
         pos = start
         while True:
-            m = _REFERENCE_RE.search(text, pos)
+            m = REFERENCE_RE.search(text, pos)
             if m is None or m.start() >= end:
                 break
             word = m.group(0)
@@ -342,7 +222,7 @@ class HolLanguageService:
             if word == "(*":
                 pos = skip_comments(text, m.start())
                 continue
-            if not _is_name_start(word):
+            if not is_name_start(word):
                 continue
             if word in OCAML_KEYWORDS or word in seen:
                 continue
