@@ -147,6 +147,13 @@ def test_a_bound_variable_named_like_a_constant_goes_nowhere():
     check_lookup_comments(service, service.get_document(path), EXAMPLES)
 
 
+def test_a_comment_definition_is_not_a_definition():
+    service = example_service()
+    path = os.path.join(PROJECT, "comment_defs.ml")
+    service.index(path, True)
+    check_lookup_comments(service, service.get_document(path), EXAMPLES)
+
+
 # ================ Symbols: document order, predicate search. =================
 def test_document_symbols_are_position_ordered():
     service = example_service()

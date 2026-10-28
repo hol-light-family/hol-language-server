@@ -227,6 +227,23 @@ def test_hover_definition_and_symbols():
         client.notify("textDocument/didClose", {"textDocument": {"uri": uri(TACTICS)}})
 
 
+def test_definitions_in_comments_are_not_published():
+    from hol_server_paths import HOL
+
+    with start_server(HOL) as (client, _):
+        with open(TACTICS, encoding="utf-8") as handle:
+            text = handle.read()
+        client.notify(
+            "textDocument/didOpen",
+            {"textDocument": {"uri": uri(TACTICS), "languageId": "ocaml", "version": 1, "text": text}},
+        )
+        symbols = client.request("textDocument/documentSymbol", {"textDocument": {"uri": uri(TACTICS)}})
+        # The goto comments name `let HELPER_TAC th` twice; the index
+        # must not publish them.
+        assert [s["name"] for s in symbols].count("HELPER_TAC") == 1
+        client.notify("textDocument/didClose", {"textDocument": {"uri": uri(TACTICS)}})
+
+
 def test_bad_settings_fail_initialize():
     proc = subprocess.Popen(
         [sys.executable, SERVER, "--workspace", PROJECT],

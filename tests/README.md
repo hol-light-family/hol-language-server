@@ -22,7 +22,7 @@ then dies without its dependencies.)
 - `examples/`: each file starts with a comment saying what it sets up and what
   the tests check in it.
     - `hol/`: stands in for a HOL Light directory (`hol.ml`, `kernel.ml`).
-    - `project/`: a small workspace whose files load each other. Each file sets up a case: `main.ml` loads a file that does not exist, `dup.ml` defines the same name twice, `ctx.ml` uses names loaded only by the file that loads it, `conversions.ml` builds and uses conversions, `locals.ml` has `let ... in` names and function parameters, `constants.ml` defines HOL constants and uses them in terms, and `bound.ml` binds the name of a constant in a term.
+    - `project/`: a small workspace whose files load each other. Each file sets up a case: `main.ml` loads a file that does not exist, `dup.ml` defines the same name twice, `ctx.ml` uses names loaded only by the file that loads it, `conversions.ml` builds and uses conversions, `locals.ml` has `let ... in` names and function parameters, `constants.ml` defines HOL constants and uses them in terms, `bound.ml` binds the name of a constant in a term, and `comment_defs.ml` defines a name for real next to a commented-out one, plus a name that exists only in a comment.
     - `definitions.ml`, `modules.ml`, `sources.ml`: single files for parser
       cases, with their expected results in `expect` comments. `sources.ml`
       checks where the source of each definition starts and ends.
@@ -72,7 +72,8 @@ Each of `test_local_names_follow_scope`,
 `test_constants_in_terms_go_to_their_definition`,
 `test_a_bound_variable_named_like_a_constant_goes_nowhere` and
 `test_conversions_resolve_where_they_are_used` indexes its file
-and calls it. `test_hover_definition_and_symbols` in
+and calls it. `test_a_comment_definition_is_not_a_definition` does
+the same for `comment_defs.ml`. `test_hover_definition_and_symbols` in
 `test_lsp_server.py` drives the `tactics.ml` ones end to end over LSP
 (same-file targets only).
 

@@ -173,6 +173,18 @@ def test_numeric_literals_are_not_identifiers():
     assert tokens == []
 
 
+def test_definitions_in_comments_are_not_detected():
+    # Nested comments hold no definitions, and neither do our own
+    # lookup comments that name definitions.
+    assert parse_text("(*\nlet x = 3;; (* not a def of `x` *)\n*)\n", "x.ml", CustomCommands()).definitions == []
+    result = parse_text(
+        "let a = 1;;\n(* goto: -> HELPER_TAC th +3 => let HELPER_TAC th +4 *)\nlet b = 2;;\n",
+        "x.ml",
+        CustomCommands(),
+    )
+    assert [d.name for d in result.definitions] == ["a", "b"]
+
+
 def test_parser_warns_about_what_it_skips(caplog: pytest.LogCaptureFixture):
     with caplog.at_level(logging.WARNING, logger="hol_language_server_core.parser"):
         parse_text("open 5;;\n", "x.ml", CustomCommands())
@@ -259,6 +271,16 @@ def test_find_symbols_ranks_exact_full_name_first(tmp_path: Path):
         "Mod.foo",
         "A.Mod.foo",
     ]
+
+
+def test_definitions_in_comments_are_not_indexed(tmp_path: Path):
+    # tmp_path: a two-line synthetic probe, not a lookup case.
+    path = tmp_path / "comment_defs.ml"
+    path.write_text("(* let ghost = 1;; *)\nlet real = 1;;\n", encoding="utf-8")
+    service = example_service()
+    service.index(str(path), True)
+    assert service.find_symbols("ghost") == []
+    assert [s.full_name for s in service.find_symbols("real")] == ["real"]
 
 
 # ========== Text and util: filter_map, difference, non-UTF8 input. ===========
