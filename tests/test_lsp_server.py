@@ -7,6 +7,7 @@ import subprocess
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
 from hol_language_server_core.text import TextDoc
@@ -358,6 +359,50 @@ def test_bad_settings_fail_initialize():
     finally:
         proc.kill()
         proc.wait(timeout=30)
+
+
+def test_completion_converts_utf16_columns(tmp_path: Path):
+    from hol_server_paths import HOL
+
+    (tmp_path / "🙂dir").mkdir()
+    (tmp_path / "🙂dir" / "x.ml").write_text("let x = 1;;\n", encoding="utf-8")
+    path = str(tmp_path / "t.ml")
+    # The cursor sits after `x`: UTF-16 column 14, code-point column 13.
+    text = 'needs "🙂dir/x";;'
+    with start_server(HOL) as (client, _):
+        client.notify(
+            "textDocument/didOpen",
+            {"textDocument": {"uri": uri(path), "languageId": "ocaml", "version": 1, "text": text}},
+        )
+        [item] = client.request(
+            "textDocument/completion",
+            {"textDocument": {"uri": uri(path)}, "position": {"line": 0, "character": 14}},
+        )
+        assert item["label"] == "x.ml"
+        assert item["textEdit"]["range"] == {
+            "start": {"line": 0, "character": 13}, "end": {"line": 0, "character": 14}}
+        client.notify("textDocument/didClose", {"textDocument": {"uri": uri(path)}})
+
+
+def test_definition_converts_utf16_columns(tmp_path: Path):
+    from hol_server_paths import HOL
+
+    (tmp_path / "u.ml").write_text("(* 🙂 *) let foo = 1;;\n", encoding="utf-8")
+    path = str(tmp_path / "t.ml")
+    text = 'needs "u.ml";;\nlet z = foo;;\n'
+    with start_server(HOL) as (client, _):
+        client.notify(
+            "textDocument/didOpen",
+            {"textDocument": {"uri": uri(path), "languageId": "ocaml", "version": 1, "text": text}},
+        )
+        targets = client.request(
+            "textDocument/definition",
+            {"textDocument": {"uri": uri(path)}, "position": {"line": 1, "character": 10}},
+        )
+        [target] = [t for t in targets if t["uri"] == uri(str(tmp_path / "u.ml"))]
+        assert target["range"] == {
+            "start": {"line": 0, "character": 13}, "end": {"line": 0, "character": 13}}
+        client.notify("textDocument/didClose", {"textDocument": {"uri": uri(path)}})
 
 
 def test_unresolved_loads_are_shown():

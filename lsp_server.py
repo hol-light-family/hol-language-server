@@ -59,15 +59,56 @@ def _warn(ls: LanguageServer, message: str) -> None:
     ls.window_show_message(lsp.ShowMessageParams(type=lsp.MessageType.Warning, message=message))
 
 
-def _to_lsp_position(pos: CorePosition) -> lsp.Position:
-    return lsp.Position(line=pos.line, character=pos.character)
+def _utf16_units(line: str, scalar: int) -> int:
+    """UTF-16 code units in the first `scalar` characters of the line."""
+    scalar = min(max(scalar, 0), len(line))
+    if line.isascii():
+        return scalar
+    return sum(2 if ord(char) > 0xFFFF else 1 for char in line[:scalar])
 
 
-def _to_lsp_range(span: CoreRange) -> lsp.Range:
-    return lsp.Range(start=_to_lsp_position(span.start), end=_to_lsp_position(span.end))
+def _scalar_from_utf16(line: str, units: int) -> int:
+    """Code points in the first `units` UTF-16 code units of the line."""
+    if line.isascii():
+        return min(max(units, 0), len(line))
+    points = 0
+    for char in line:
+        units -= 2 if ord(char) > 0xFFFF else 1
+        if units < 0:
+            break
+        points += 1
+    return points
 
 
-def _to_completion_item(item: Completion) -> lsp.CompletionItem:
+def _core_position(doc: TextDoc, pos: lsp.Position) -> CorePosition:
+    """The request position in code points, the core's coordinates."""
+    if 0 <= pos.line < doc.line_count:
+        character = _scalar_from_utf16(doc.line_at(pos.line), pos.character)
+    else:
+        character = pos.character
+    return CorePosition(pos.line, character)
+
+
+def _cached_doc(service: HolLanguageService, docs: dict[str, TextDoc], path: str) -> TextDoc:
+    """The document, reading it once per cache."""
+    if path not in docs:
+        docs[path] = service.get_document(path)
+    return docs[path]
+
+
+def _to_lsp_position(pos: CorePosition, doc: TextDoc) -> lsp.Position:
+    if 0 <= pos.line < doc.line_count:
+        character = _utf16_units(doc.line_at(pos.line), pos.character)
+    else:
+        character = pos.character
+    return lsp.Position(line=pos.line, character=character)
+
+
+def _to_lsp_range(span: CoreRange, doc: TextDoc) -> lsp.Range:
+    return lsp.Range(start=_to_lsp_position(span.start, doc), end=_to_lsp_position(span.end, doc))
+
+
+def _to_completion_item(item: Completion, doc: TextDoc) -> lsp.CompletionItem:
     return lsp.CompletionItem(
         label=item.label,
         kind=_COMPLETION_KINDS[item.kind],
@@ -75,12 +116,12 @@ def _to_completion_item(item: Completion) -> lsp.CompletionItem:
         if item.documentation is not None else None,
         sort_text=item.sort_text,
         commit_characters=item.commit_characters,
-        text_edit=lsp.TextEdit(range=_to_lsp_range(item.edit_range), new_text=item.label)
+        text_edit=lsp.TextEdit(range=_to_lsp_range(item.edit_range, doc), new_text=item.label)
         if item.edit_range is not None else None,
     )
 
 
-def _to_symbol_info(symbol: SymbolInfo) -> lsp.SymbolInformation:
+def _to_symbol_info(symbol: SymbolInfo, doc: TextDoc) -> lsp.SymbolInformation:
     end = symbol.end_position
     if end is None:
         end = symbol.position.translate(0, len(symbol.name))
@@ -89,7 +130,7 @@ def _to_symbol_info(symbol: SymbolInfo) -> lsp.SymbolInformation:
         kind=_SYMBOL_KINDS[symbol.kind],
         location=lsp.Location(
             uri=_uri(symbol.path),
-            range=_to_lsp_range(CoreRange(symbol.position, end)),
+            range=_to_lsp_range(CoreRange(symbol.position, end), doc),
         ),
         container_name=symbol.container,
     )
@@ -113,11 +154,12 @@ def create_server(service: HolLanguageService, settings: Settings,
         for path, missing in service.missing_loads(file_path).items():
             if not missing and path not in published:
                 continue
+            doc = service.get_document(path)
             ls.text_document_publish_diagnostics(lsp.PublishDiagnosticsParams(
                 uri=_uri(path),
                 diagnostics=[
                     lsp.Diagnostic(
-                        range=_to_lsp_range(load.range),
+                        range=_to_lsp_range(load.range, doc),
                         message=f"File not found: {load.name}",
                         severity=lsp.DiagnosticSeverity.Warning,
                         source="hol-language-server",
@@ -189,23 +231,25 @@ def create_server(service: HolLanguageService, settings: Settings,
     @server.feature(lsp.TEXT_DOCUMENT_HOVER)
     def on_hover(ls: LanguageServer, params: lsp.HoverParams) -> lsp.Hover | None:
         doc = prepare(ls, params.text_document.uri)
-        pos = CorePosition(line=params.position.line, character=params.position.character)
+        pos = _core_position(doc, params.position)
         found = service.hover(doc, pos)
         if found is None:
             return None
         markdown, word_range = found
         return lsp.Hover(
             contents=lsp.MarkupContent(kind=lsp.MarkupKind.Markdown, value=markdown),
-            range=_to_lsp_range(word_range) if word_range is not None else None,
+            range=_to_lsp_range(word_range, doc) if word_range is not None else None,
         )
 
     @server.feature(lsp.TEXT_DOCUMENT_DEFINITION)
     def on_definition(ls: LanguageServer, params: lsp.DefinitionParams) -> list[lsp.Location]:
         doc = prepare(ls, params.text_document.uri)
-        pos = CorePosition(line=params.position.line, character=params.position.character)
+        pos = _core_position(doc, params.position)
+        docs: dict[str, TextDoc] = {}
         return [
             lsp.Location(
-                uri=_uri(target.path), range=_to_lsp_range(target.range)
+                uri=_uri(target.path),
+                range=_to_lsp_range(target.range, _cached_doc(service, docs, target.path)),
             )
             for target in service.definition(doc, pos)
         ]
@@ -213,22 +257,25 @@ def create_server(service: HolLanguageService, settings: Settings,
     @server.feature(lsp.TEXT_DOCUMENT_COMPLETION, lsp.CompletionOptions(trigger_characters=["/", '"']))
     def on_completion(ls: LanguageServer, params: lsp.CompletionParams) -> list[lsp.CompletionItem]:
         doc = prepare(ls, params.text_document.uri)
-        pos = CorePosition(line=params.position.line, character=params.position.character)
-        return [_to_completion_item(item) for item in service.completion(doc, pos)]
+        pos = _core_position(doc, params.position)
+        return [_to_completion_item(item, doc) for item in service.completion(doc, pos)]
 
     @server.feature(lsp.TEXT_DOCUMENT_DOCUMENT_SYMBOL)
     def on_document_symbol(ls: LanguageServer,
                            params: lsp.DocumentSymbolParams) -> list[lsp.SymbolInformation]:
         file_path = _fs_path(params.text_document.uri)
         index(ls, file_path, False)
-        return [_to_symbol_info(s) for s in service.document_symbols(file_path)]
+        doc = service.get_document(file_path)
+        return [_to_symbol_info(s, doc) for s in service.document_symbols(file_path)]
 
     @server.feature(lsp.WORKSPACE_SYMBOL)
     def on_workspace_symbol(ls: LanguageServer,
                             params: lsp.WorkspaceSymbolParams) -> list[lsp.SymbolInformation]:
         query = params.query.lower()
         symbols = service.search_symbols(lambda name: query in name.lower())
-        return [_to_symbol_info(s) for s in symbols[:MAX_WORKSPACE_SYMBOLS]]
+        docs: dict[str, TextDoc] = {}
+        return [_to_symbol_info(s, _cached_doc(service, docs, s.path))
+                for s in symbols[:MAX_WORKSPACE_SYMBOLS]]
 
     return server
 
