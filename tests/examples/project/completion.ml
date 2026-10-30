@@ -61,3 +61,6 @@ let z = zzz_missing;;
 
 let z = Kernel.zzz;;
 (* complete: let z = Kernel.zzz => none *)
+
+let t = `!E. E`;;
+(* complete: let t = `!E. E => none *)

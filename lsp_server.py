@@ -33,6 +33,7 @@ _COMPLETION_KINDS = {
     "theorem": lsp.CompletionItemKind.Constant,
     "definition": lsp.CompletionItemKind.Function,
     "term": lsp.CompletionItemKind.Constant,
+    "constant": lsp.CompletionItemKind.Constant,
     "value": lsp.CompletionItemKind.Variable,
     "module": lsp.CompletionItemKind.Module,
     "file": lsp.CompletionItemKind.File,

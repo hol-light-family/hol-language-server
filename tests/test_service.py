@@ -162,6 +162,13 @@ def test_completion_offers_what_the_complete_comments_say():
     check_lookup_comments(service, service.get_document(path), EXAMPLES)
 
 
+def test_terms_offer_what_the_complete_comments_say():
+    service = example_service()
+    path = os.path.join(PROJECT, "constants.ml")
+    service.index(path, True)
+    check_lookup_comments(service, service.get_document(path), EXAMPLES)
+
+
 def test_import_paths_offer_what_the_complete_comments_say():
     service = example_service()
     path = os.path.join(PROJECT, "completion_files.ml")
@@ -199,6 +206,17 @@ def test_completion_carries_docs_ranges_and_commit_characters():
     for item in members:
         assert item.edit_range is not None
         assert (item.edit_range.start.character, item.edit_range.end.character) == (15, 15)
+    service = example_service()
+    path = os.path.join(PROJECT, "constants.ml")
+    service.index(path, True)
+    doc = service.get_document(path)
+    offset = doc.text.index("EVEN 4 /\\ fib") + len("EVEN 4 /\\ fib")
+    members = service.completion(doc, doc.position_at(offset))
+    assert [item.label for item in members] == ["fibonacci", "fib", "fib3"]
+    fib = members[1]
+    assert fib.documentation == "Constant `fib`, defined by `FIB_DEF`\n```\n`|- fib n = fibonacci n`\n```"
+    assert fib.edit_range is not None
+    assert (fib.edit_range.start.character, fib.edit_range.end.character) == (52, 55)
 
 
 def test_completion_lists_import_paths(tmp_path: Path):

@@ -208,6 +208,9 @@ class HolLanguageService:
         files = self._completion_file_names(doc, position)
         if files is not None:
             return files
+        terms = self._completion_terms(doc, position)
+        if terms is not None:
+            return terms
         if self._at_binder_position(doc, position):
             return []
         word, word_range = util.get_word_at_position(doc, position)
@@ -237,6 +240,39 @@ class HolLanguageService:
             commit_characters=["."],
             edit_range=edit_range,
         )
+
+    def _completion_terms(self, doc: TextDoc, position: Position) -> list[Completion] | None:
+        """Constants starting with the name at the position in a term, or
+        None outside terms and in an `^` antiquotation, which names an OCaml
+        value. A variable the term binds completes to nothing."""
+        if position.line < 0 or position.line >= doc.line_count:
+            return None
+        offset = doc.offset_at(position)
+        file = self.database.get_file_index(doc.path)
+        # Top-level items start outside terms: scan from the last one.
+        start = max((d.source_start for d in file.definitions
+                     if d.source_start is not None and d.source_start <= offset), default=0) if file else 0
+        term = term_start(doc.text, start, offset)
+        if term is None:
+            return None
+        line = doc.line_at(position.line)
+        span = hol_word_at(line, position.character)
+        if span is None:
+            return []
+        begin, end = span
+        # `^x`, but not the `^` of a type such as `real^N`.
+        if line[begin - 1:begin] == "^" and not re.match(r"[\w']", line[begin - 2:begin - 1]):
+            return None
+        prefix = line[begin:position.character]
+        if not prefix:
+            return []
+        # A variable the term binds hides the constants.
+        if bound_in_term(doc.text, term, offset - position.character + begin, line[begin:end]):
+            return []
+        deps = self.database.all_dependencies(doc.path)
+        found = self.database.filter_constants_by_name(lambda name: name.startswith(prefix), deps)
+        edit_range = Range(position.with_(character=begin), position.with_(character=end))
+        return [self._definition_completion(constant, False, edit_range) for constant in found]
 
     def _at_binder_position(self, doc: TextDoc, position: Position) -> bool:
         """Whether the position declares a name instead of using one: after

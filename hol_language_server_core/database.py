@@ -123,6 +123,15 @@ class Database:
                 mods.extend(m for m in items if deps is None or m.get_file_path() in deps)
         return defs, mods
 
+    def filter_constants_by_name(self, predicate: Callable[[str], bool],
+                                 deps: set[str]) -> list[Definition]:
+        """HOL constants whose names satisfy the predicate, in deps."""
+        found: list[Definition] = []
+        for name, items in self._constant_index.items():
+            if predicate(name):
+                found.extend(c for c in items if c.get_file_path() in deps)
+        return found
+
     def find_dependency(self, file_path: str, name: str) -> Dependency | None:
         file = self._file_index.get(file_path)
         if file is None:

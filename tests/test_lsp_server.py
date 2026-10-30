@@ -14,6 +14,7 @@ from hol_server_paths import PROJECT
 
 SERVER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lsp_server.py")
 TACTICS = os.path.join(PROJECT, "tactics.ml")
+CONSTANTS = os.path.join(PROJECT, "constants.ml")
 
 
 def uri(path: str) -> str:
@@ -283,6 +284,30 @@ def test_completion_suggests_names_members_and_files():
         assert files[0]["kind"] == 17
         assert files[0]["sortText"] == " util.ml"
         client.notify("textDocument/didClose", {"textDocument": {"uri": uri(TACTICS)}})
+
+
+def test_term_completion_suggests_constants():
+    from hol_server_paths import HOL
+
+    with start_server(HOL) as (client, _):
+        with open(CONSTANTS, encoding="utf-8") as handle:
+            text = handle.read()
+        client.notify(
+            "textDocument/didOpen",
+            {"textDocument": {"uri": uri(CONSTANTS), "languageId": "ocaml", "version": 1, "text": text}},
+        )
+        members = client.request(
+            "textDocument/completion",
+            {"textDocument": {"uri": uri(CONSTANTS)},
+             "position": {"line": 46, "character": 55}},
+        )
+        assert [(item["label"], item["kind"]) for item in members] == [
+            ("fibonacci", 21), ("fib", 21), ("fib3", 21)]
+        for item in members:
+            edit = item["textEdit"]
+            assert (edit["range"]["start"]["character"], edit["range"]["end"]["character"]) == (52, 55)
+            assert edit["newText"] == item["label"]
+        client.notify("textDocument/didClose", {"textDocument": {"uri": uri(CONSTANTS)}})
 
 
 def test_definitions_in_comments_are_not_published():

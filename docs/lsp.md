@@ -36,6 +36,9 @@ The language server `hol-language-server` gives an editor lookups over HOL Light
     what is typed.
   - A name being defined: nothing. After `let`, `and`, `fun`, or `module`,
     while only names follow it, the word declares a name instead of using one.
+  - Inside a term: the HOL constants starting with the name. A variable the
+    term binds completes to nothing, and an `^` antiquotation completes OCaml
+    names instead.
 - Symbols.
   - The outline of the open file: every definition and module in it.
   - Search across all files read: names containing the search text, ignoring case, at most 1000 results.
