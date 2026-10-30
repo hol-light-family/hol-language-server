@@ -33,6 +33,19 @@ It speaks LSP over stdio:
 hol-language-server --hol-path /path/to/hol-light --workspace /path/to/s2n-bignum
 ```
 
+## Editor extension
+
+`editors/vscode/` is the VS Code extension: syntax highlighting plus a client that starts the server above. Needs [Node.js](https://nodejs.org/) for packaging:
+
+```sh
+cd editors/vscode
+npm ci
+npm run package
+code --install-extension hol-language-server-0.1.0.vsix
+```
+
+Then set `hol-light.path` to the HOL Light directory; the other `hol-light.*` settings mirror the [configuration](docs/configuration.md). The server restarts on its own when they change, or run `HOL Light: Restart Language Server`.
+
 ## Development
 
 `uv sync` creates `.venv` from `uv.lock`. `uv run pytest` runs the tests, and `uv run basedpyright` the type check. Both run in CI on every pull request. How the tests work and how to add one: [tests/README.md](tests/README.md).
