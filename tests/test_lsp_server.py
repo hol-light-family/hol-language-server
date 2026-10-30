@@ -202,6 +202,7 @@ def test_initialize_advertises_the_subset():
         assert capabilities["definitionProvider"] is True
         assert capabilities["documentSymbolProvider"] is True
         assert capabilities["workspaceSymbolProvider"] == {"resolveProvider": False}
+        assert capabilities["completionProvider"] == {"triggerCharacters": ["/"]}
 
 
 def test_hover_definition_and_symbols():
@@ -224,6 +225,55 @@ def test_hover_definition_and_symbols():
         found = client.request("workspace/symbol", {"query": "helper"})
         assert [s["name"] for s in found] == ["HELPER_TAC"]
 
+        client.notify("textDocument/didClose", {"textDocument": {"uri": uri(TACTICS)}})
+
+
+def test_completion_suggests_names_members_and_files():
+    from hol_server_paths import HOL
+
+    with start_server(HOL) as (client, _):
+        with open(TACTICS, encoding="utf-8") as handle:
+            text = handle.read()
+        client.notify(
+            "textDocument/didOpen",
+            {"textDocument": {"uri": uri(TACTICS), "languageId": "ocaml", "version": 1, "text": text}},
+        )
+        [found] = client.request(
+            "textDocument/completion",
+            {"textDocument": {"uri": uri(TACTICS)}, "position": {"line": 11, "character": 14}},
+        )
+        assert found == {"label": "HELPER_TAC", "kind": 6}
+
+        changed = text + "let z = Kernel.kfun"
+        client.notify(
+            "textDocument/didChange",
+            {"textDocument": {"uri": uri(TACTICS), "version": 2},
+             "contentChanges": [{"text": changed}]},
+        )
+        members = client.request(
+            "textDocument/completion",
+            {"textDocument": {"uri": uri(TACTICS)},
+             "position": {"line": text.count("\n"), "character": len("let z = Kernel.kfun")}},
+        )
+        assert [item["label"] for item in members] == ["kfun", "kfun2"]
+        for item in members:
+            edit = item["textEdit"]
+            assert (edit["range"]["start"]["character"], edit["range"]["end"]["character"]) == (15, 19)
+            assert edit["newText"] == item["label"]
+
+        client.notify(
+            "textDocument/didChange",
+            {"textDocument": {"uri": uri(TACTICS), "version": 3},
+             "contentChanges": [{"text": 'needs "lib/u'}]},
+        )
+        files = client.request(
+            "textDocument/completion",
+            {"textDocument": {"uri": uri(TACTICS)},
+             "position": {"line": 0, "character": len('needs "lib/u')}},
+        )
+        assert {item["label"] for item in files} == {"util.ml"}
+        assert files[0]["kind"] == 17
+        assert files[0]["sortText"] == " util.ml"
         client.notify("textDocument/didClose", {"textDocument": {"uri": uri(TACTICS)}})
 
 

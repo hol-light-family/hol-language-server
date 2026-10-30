@@ -275,8 +275,14 @@ class HolLanguageService:
         name_start = position.character - len(name_prefix)
         edit_range = Range(position.with_(character=name_start), position)
         items: list[Completion] = []
+        searched: set[str] = set()
         for root in self.root_paths:
             base = os.path.dirname(doc.path) if root == "." else root
+            search_dir = os.path.abspath(os.path.join(base, directory))
+            if search_dir in searched:
+                # Two roots over one directory list it once.
+                continue
+            searched.add(search_dir)
             try:
                 entries = util.read_dir(os.path.join(base, directory))
             except OSError:

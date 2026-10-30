@@ -154,6 +154,97 @@ def test_a_comment_definition_is_not_a_definition():
     check_lookup_comments(service, service.get_document(path), EXAMPLES)
 
 
+# ================= Completion: names, members, files. =================
+def test_completion_offers_what_the_complete_comments_say():
+    service = example_service()
+    path = os.path.join(PROJECT, "completion.ml")
+    service.index(path, True)
+    check_lookup_comments(service, service.get_document(path), EXAMPLES)
+
+
+def test_import_paths_offer_what_the_complete_comments_say():
+    service = example_service()
+    path = os.path.join(PROJECT, "completion_files.ml")
+    service.index(path, True)
+    check_lookup_comments(service, service.get_document(path), EXAMPLES)
+
+
+def test_completion_carries_docs_ranges_and_commit_characters():
+    service = example_service()
+    path = os.path.join(PROJECT, "completion.ml")
+    service.index(path, True)
+    doc = service.get_document(path)
+    offset = doc.text.index("let probe_tac") + len("let probe_tac")
+    [probed] = service.completion(doc, doc.position_at(offset))
+    assert (probed.label, probed.documentation, probed.edit_range) == ("probe_tac", None, None)
+    offset = doc.text.index("let z = ADD_S") + len("let z = ADD_S")
+    [sym, _alt] = service.completion(doc, doc.position_at(offset))
+    assert sym.documentation == "Theorem `ADD_SYM`\n```\n`|- !m n. m + n = n + m`\n```"
+    assert sym.edit_range is None
+    offset = doc.text.index("let z = Inne") + len("let z = Inne")
+    [inner] = service.completion(doc, doc.position_at(offset))
+    assert (inner.documentation, inner.commit_characters, inner.edit_range) == (
+        "Module `Gadget.Inner`", ["."], None)
+    offset = doc.text.index("let q = Gadget.Inne") + len("let q = Gadget.Inne")
+    [member] = service.completion(doc, doc.position_at(offset))
+    assert (member.documentation, member.commit_characters) == ("Module `Gadget.Inner`", ["."])
+    assert member.edit_range is not None
+    assert (member.edit_range.start.character, member.edit_range.end.character) == (15, 19)
+    offset = doc.text.index("let z = Kernel.kfun") + len("let z = Kernel.kfun")
+    members = service.completion(doc, doc.position_at(offset))
+    assert [(item.label, item.kind) for item in members] == [("kfun", "value"), ("kfun2", "value")]
+    for item in members:
+        assert item.edit_range is not None
+        assert (item.edit_range.start.character, item.edit_range.end.character) == (15, 19)
+    offset = doc.text.index("let w = Kernel.") + len("let w = Kernel.")
+    members = service.completion(doc, doc.position_at(offset))
+    assert [item.label for item in members] == ["kfun", "kfun2"]
+    for item in members:
+        assert item.edit_range is not None
+        assert (item.edit_range.start.character, item.edit_range.end.character) == (15, 15)
+
+
+def test_completion_lists_import_paths(tmp_path: Path):
+    # tmp_path: the directory entries completed here must not leak into the shared workspace.
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "util.ml").write_text("let u = 1;;\n")
+    (tmp_path / "lib" / ".hidden.ml").write_text("let h = 1;;\n")
+    (tmp_path / "lib" / "notes.txt").write_text("no\n")
+    (tmp_path / "lib" / "sub").mkdir()
+    settings = default_settings()
+    settings.hol_path = HOL
+    settings.workspace = str(tmp_path)
+    settings.root_paths = ["."]
+    settings.custom_commands = CustomCommands(imports=["my_needs"])
+    service = HolLanguageService(settings)
+    path = str(tmp_path / "main.ml")
+    doc = TextDoc(path, 'needs "lib/u')
+    [found] = service.completion(doc, Position(0, len('needs "lib/u')))
+    assert (found.label, found.kind, found.sort_text) == ("util.ml", "file", " util.ml")
+    assert found.edit_range is not None
+    assert (found.edit_range.start.character, found.edit_range.end.character) == (11, 12)
+    doc = TextDoc(path, 'needs "lib/')
+    items = service.completion(doc, Position(0, len('needs "lib/')))
+    assert {(item.label, item.kind) for item in items} == {("util.ml", "file"), ("sub", "folder")}
+    [folder] = [item for item in items if item.kind == "folder"]
+    assert folder.commit_characters == ["/"]
+    doc = TextDoc(path, 'my_needs "lib/u')
+    [found] = service.completion(doc, Position(0, len('my_needs "lib/u')))
+    assert found.label == "util.ml"
+    doc = TextDoc(path, 'needs "gone/')
+    assert service.completion(doc, Position(0, len('needs "gone/'))) == []
+    doc = TextDoc(path, 'needs "lib/util.ml"')
+    assert service.completion(doc, Position(0, len(doc.text))) == []
+
+
+def test_completion_is_empty_without_a_word():
+    service = example_service()
+    doc = tactics_doc(service)
+    assert service.completion(doc, Position(0, 0)) == []
+    assert service.completion(doc, Position(doc.line_count, 0)) == []
+    assert service.completion(doc, Position(-1, 0)) == []
+
+
 # ================ Symbols: document order, predicate search. =================
 def test_document_symbols_are_position_ordered():
     service = example_service()

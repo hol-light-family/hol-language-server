@@ -16,13 +16,13 @@ then dies without its dependencies.)
 - `hol_server_paths.py`: paths to the example files, shared by the tests.
 - `expectations.py`: reads and checks the `expect` comments of an example
   file (below).
-- `lookups.py`: reads and checks the `goto` and `hover` comments of an
-  example file (below).
+- `lookups.py`: reads and checks the `goto`, `hover`, and `complete`
+  comments of an example file (below).
 
 - `examples/`: each file starts with a comment saying what it sets up and what
   the tests check in it.
     - `hol/`: stands in for a HOL Light directory (`hol.ml`, `kernel.ml`).
-    - `project/`: a small workspace whose files load each other. Each file sets up a case: `main.ml` loads a file that does not exist, `dup.ml` defines the same name twice, `ctx.ml` uses names loaded only by the file that loads it, `conversions.ml` builds and uses conversions, `locals.ml` has `let ... in` names and function parameters, `constants.ml` defines HOL constants and uses them in terms, `bound.ml` binds the name of a constant in a term, and `comment_defs.ml` defines a name for real next to a commented-out one, plus a name that exists only in a comment.
+    - `project/`: a small workspace whose files load each other. Each file sets up a case: `main.ml` loads a file that does not exist, `dup.ml` defines the same name twice, `ctx.ml` uses names loaded only by the file that loads it, `conversions.ml` builds and uses conversions, `locals.ml` has `let ... in` names and function parameters, `constants.ml` defines HOL constants and uses them in terms, `bound.ml` binds the name of a constant in a term, `comment_defs.ml` defines a name for real next to a commented-out one, plus a name that exists only in a comment, `completion.ml` probes name and member completion with `complete` comments, and `completion_files.ml` probes import paths the same way.
     - `definitions.ml`, `modules.ml`, `sources.ml`: single files for parser
       cases, with their expected results in `expect` comments. `sources.ml`
       checks where the source of each definition starts and ends.
@@ -66,15 +66,18 @@ module M = struct let inner = 1;; end;;
 
 ## Looked-up names in the example file
 
-A service example holds what Go to Definition and hover must return in
-comments of its own. `check_lookup_comments` in `lookups.py` checks them.
-Each of `test_local_names_follow_scope`,
+A service example holds what Go to Definition, hover, and completion must
+return in comments of its own. `check_lookup_comments` in `lookups.py`
+checks them. Each of `test_local_names_follow_scope`,
 `test_constants_in_terms_go_to_their_definition`,
 `test_a_bound_variable_named_like_a_constant_goes_nowhere` and
 `test_conversions_resolve_where_they_are_used` indexes its file
-and calls it. `test_a_comment_definition_is_not_a_definition` does
-the same for `comment_defs.ml`. `test_hover_definition_and_symbols` in
-`test_lsp_server.py` drives the `tactics.ml` ones end to end over LSP
+and calls it. `test_a_comment_definition_is_not_a_definition`,
+`test_completion_offers_what_the_complete_comments_say`, and
+`test_import_paths_offer_what_the_complete_comments_say` do the same
+for `comment_defs.ml`, `completion.ml`, and `completion_files.ml`.
+`test_hover_definition_and_symbols`
+in `test_lsp_server.py` drives the `tactics.ml` ones end to end over LSP
 (same-file targets only).
 
 ```ocaml
@@ -83,17 +86,28 @@ let USES = `2 divides_alt 4 /\ evens 4`;;
 (* goto: divides_alt 4 => divides_alt n <=> *)
 (* goto: fib n = +4 => nowhere *)
 (* hover: fib n = +4 => none *)
+
+let z = ADD_S;;
+(* complete: let z = ADD_S => ADD_SYM:theorem ADD_SYM_ALT:theorem *)
 ```
 
 - `(* goto: use => target *)` says Go to Definition on `use` jumps to
   `target`, or nowhere when `target` is `nowhere`.
 - `(* hover: use => text *)` says hover on `use` shows `text`, or nothing
   when `text` is `none`. Longer markdown goes on the lines after `=>`.
+- `(* complete: use => labels *)` says completion with the cursor after
+  `use` offers exactly those items, in order, or nothing when the payload
+  is `none`. Each item is written `label:kind`.
 - `use` and `target` are the text where the name first occurs, plus `+skip`
   characters when the name is not at the start of it. `target` names a file
   as `text @path/from/examples` when it is not the file of the comment.
+  For `complete`, the cursor sits after `use`, plus `+skip` characters.
 - Each comment goes after the code it names. A use or target resolves
   to its first occurrence, which must be the code, not another comment.
+- A completion probe is code too, so its binder is indexed and matches
+  later probes. Keep binder names out of the prefixes under test.
+- An import probe resolves: every `needs` string in `completion_files.ml`
+  names a file that exists, or the workspace-wide tests see a missing load.
 
 ## Reported diagnostics in the example file
 
