@@ -2,6 +2,7 @@
 
 import os
 import re
+import string
 from collections.abc import Callable
 
 from hol_language_server_core import util
@@ -325,7 +326,14 @@ class HolLanguageService:
         head, _, prefix = typed.rpartition(".")
         modules = sorted(self.database.resolve_module_name(head, open_modules, deps),
                          key=lambda mod: (mod.get_file_path(), mod.start))
-        edit_range = Range(position.with_(character=position.character - len(prefix)), position)
+        edit_start = position.character - len(prefix)
+        edit_end = position.character
+        for char in word[edit_end - word_range.start.character:]:
+            # The edit covers the rest of the name too.
+            if char not in string.ascii_letters + string.digits + "_'":
+                break
+            edit_end += 1
+        edit_range = Range(position.with_(character=edit_start), position.with_(character=edit_end))
         defs, _ = self.database.filter_by_name(lambda name: name.startswith(prefix), deps)
         items: list[Completion] = []
         for module in modules:

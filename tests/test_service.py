@@ -219,6 +219,18 @@ def test_completion_carries_docs_ranges_and_commit_characters():
     assert (fib.edit_range.start.character, fib.edit_range.end.character) == (52, 55)
 
 
+def test_completion_covers_the_qualified_segment():
+    service = example_service()
+    path = os.path.join(PROJECT, "completion.ml")
+    service.index(path, True)
+    doc = service.get_document(path)
+    changed = service.open_document(path, doc.text + "\nlet q2 = Gadget.Inner")
+    [member] = service.completion(changed, Position(changed.line_count - 1, len("let q2 = Gadget.Inne")))
+    assert member.label == "Inner"
+    assert member.edit_range is not None
+    assert (member.edit_range.start.character, member.edit_range.end.character) == (16, 21)
+
+
 def test_completion_lists_import_paths(tmp_path: Path):
     # tmp_path: the directory entries completed here must not leak into the shared workspace.
     (tmp_path / "lib").mkdir()
