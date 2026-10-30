@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Language server for HOL Light (hol-language-server).
 
-Static lookup over `.ml` and `.hl` files: hover statements, go to
-definition, and document and workspace symbols. It parses files and the
-files they load, plus the core HOL Light sources. It evaluates nothing.
+Static lookup over `.ml` and `.hl` files: completion, hover statements,
+go to definition, and document and workspace symbols. It parses files and
+the files they load, plus the core HOL Light sources. It evaluates nothing.
 """
 
 import logging
@@ -14,7 +14,7 @@ from pygls.lsp.server import LanguageServer
 from pygls.uris import from_fs_path, to_fs_path
 
 from hol_language_server_core.config import Settings, expand_root_paths, parse_settings, settings_from_options
-from hol_language_server_core.service import HolLanguageService, SymbolInfo
+from hol_language_server_core.service import Completion, HolLanguageService, SymbolInfo
 from hol_language_server_core.text import Position as CorePosition, Range as CoreRange, TextDoc
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,16 @@ _SYMBOL_KINDS = {
     "term": lsp.SymbolKind.Constant,
     "value": lsp.SymbolKind.Variable,
     "module": lsp.SymbolKind.Module,
+}
+
+_COMPLETION_KINDS = {
+    "theorem": lsp.CompletionItemKind.Constant,
+    "definition": lsp.CompletionItemKind.Function,
+    "term": lsp.CompletionItemKind.Constant,
+    "value": lsp.CompletionItemKind.Variable,
+    "module": lsp.CompletionItemKind.Module,
+    "file": lsp.CompletionItemKind.File,
+    "folder": lsp.CompletionItemKind.Folder,
 }
 
 
@@ -54,6 +64,19 @@ def _to_lsp_position(pos: CorePosition) -> lsp.Position:
 
 def _to_lsp_range(span: CoreRange) -> lsp.Range:
     return lsp.Range(start=_to_lsp_position(span.start), end=_to_lsp_position(span.end))
+
+
+def _to_completion_item(item: Completion) -> lsp.CompletionItem:
+    return lsp.CompletionItem(
+        label=item.label,
+        kind=_COMPLETION_KINDS[item.kind],
+        documentation=lsp.MarkupContent(kind=lsp.MarkupKind.Markdown, value=item.documentation)
+        if item.documentation is not None else None,
+        sort_text=item.sort_text,
+        commit_characters=item.commit_characters,
+        text_edit=lsp.TextEdit(range=_to_lsp_range(item.edit_range), new_text=item.label)
+        if item.edit_range is not None else None,
+    )
 
 
 def _to_symbol_info(symbol: SymbolInfo) -> lsp.SymbolInformation:
@@ -185,6 +208,12 @@ def create_server(service: HolLanguageService, settings: Settings,
             )
             for target in service.definition(doc, pos)
         ]
+
+    @server.feature(lsp.TEXT_DOCUMENT_COMPLETION, lsp.CompletionOptions(trigger_characters=["/"]))
+    def on_completion(ls: LanguageServer, params: lsp.CompletionParams) -> list[lsp.CompletionItem]:
+        doc = prepare(ls, params.text_document.uri)
+        pos = CorePosition(line=params.position.line, character=params.position.character)
+        return [_to_completion_item(item) for item in service.completion(doc, pos)]
 
     @server.feature(lsp.TEXT_DOCUMENT_DOCUMENT_SYMBOL)
     def on_document_symbol(ls: LanguageServer,
