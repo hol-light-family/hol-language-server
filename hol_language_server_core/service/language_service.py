@@ -338,7 +338,7 @@ class HolLanguageService:
     def _completion_file_names(self, doc: TextDoc, position: Position) -> list[Completion] | None:
         """Files and folders completing an import string, or None outside one."""
         imports = ["needs", "loads", "loadt", *self._settings.custom_commands.imports]
-        match = re.match(r'^\s*(?:' + "|".join(imports) + r')\s*"', doc.line_at(position.line))
+        match = re.match(r'^\s*(' + "|".join(imports) + r')\s*"', doc.line_at(position.line))
         if match is None or position.character < len(match.group(0)):
             return None
         prefix = doc.line_at(position.line)[len(match.group(0)):position.character]
@@ -349,7 +349,9 @@ class HolLanguageService:
         edit_range = Range(position.with_(character=name_start), position)
         items: list[Completion] = []
         searched: set[str] = set()
-        for root in self.root_paths:
+        # `loads` resolves under the HOL Light directory only.
+        roots = [self._settings.hol_path] if match.group(1) == "loads" else self.root_paths
+        for root in roots:
             base = os.path.dirname(doc.path) if root == "." else root
             search_dir = os.path.abspath(os.path.join(base, directory))
             if search_dir in searched:

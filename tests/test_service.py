@@ -227,8 +227,10 @@ def test_completion_lists_import_paths(tmp_path: Path):
     (tmp_path / "lib" / "notes.txt").write_text("no\n")
     (tmp_path / "lib" / "sub").mkdir()
     (tmp_path / "linked").symlink_to(tmp_path / "lib", target_is_directory=True)
+    (tmp_path / "hol").mkdir()
+    (tmp_path / "hol" / "marker.ml").write_text("let m = 1;;\n")
     settings = default_settings()
-    settings.hol_path = HOL
+    settings.hol_path = str(tmp_path / "hol")
     settings.workspace = str(tmp_path)
     settings.root_paths = ["."]
     settings.custom_commands = CustomCommands(imports=["my_needs"])
@@ -247,6 +249,11 @@ def test_completion_lists_import_paths(tmp_path: Path):
     doc = TextDoc(path, 'needs "l')
     items = service.completion(doc, Position(0, len('needs "l')))
     assert {(item.label, item.kind) for item in items} == {("lib", "folder"), ("linked", "folder")}
+    doc = TextDoc(path, 'loads "m')
+    [found] = service.completion(doc, Position(0, len('loads "m')))
+    assert (found.label, found.kind) == ("marker.ml", "file")
+    doc = TextDoc(path, 'loads "l')
+    assert service.completion(doc, Position(0, len('loads "l'))) == []
     doc = TextDoc(path, 'my_needs "lib/u')
     [found] = service.completion(doc, Position(0, len('my_needs "lib/u')))
     assert found.label == "util.ml"
