@@ -364,7 +364,8 @@ class HolLanguageService:
             for entry in entries:
                 if entry.name.startswith(".") or not entry.name.startswith(name_prefix):
                     continue
-                is_dir = entry.is_dir(follow_symlinks=False)
+                # A link to a folder completes as a folder.
+                is_dir = entry.is_dir()
                 if not is_dir and not entry.name.endswith((".ml", ".hl")):
                     continue
                 items.append(Completion(label=entry.name, kind="folder" if is_dir else "file",

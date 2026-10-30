@@ -226,6 +226,7 @@ def test_completion_lists_import_paths(tmp_path: Path):
     (tmp_path / "lib" / ".hidden.ml").write_text("let h = 1;;\n")
     (tmp_path / "lib" / "notes.txt").write_text("no\n")
     (tmp_path / "lib" / "sub").mkdir()
+    (tmp_path / "linked").symlink_to(tmp_path / "lib", target_is_directory=True)
     settings = default_settings()
     settings.hol_path = HOL
     settings.workspace = str(tmp_path)
@@ -243,6 +244,9 @@ def test_completion_lists_import_paths(tmp_path: Path):
     assert {(item.label, item.kind) for item in items} == {("util.ml", "file"), ("sub", "folder")}
     [folder] = [item for item in items if item.kind == "folder"]
     assert folder.commit_characters == ["/"]
+    doc = TextDoc(path, 'needs "l')
+    items = service.completion(doc, Position(0, len('needs "l')))
+    assert {(item.label, item.kind) for item in items} == {("lib", "folder"), ("linked", "folder")}
     doc = TextDoc(path, 'my_needs "lib/u')
     [found] = service.completion(doc, Position(0, len('my_needs "lib/u')))
     assert found.label == "util.ml"
