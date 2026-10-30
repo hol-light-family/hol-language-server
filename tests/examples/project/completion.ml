@@ -10,6 +10,8 @@ needs "lib/util.ml";;
 
 module Gadget = struct
   let widget x = x
+  let gimbal x = x
+  (* complete: let gimb => none *)
 
   module Inner = struct
     let sprocket y = y
@@ -17,7 +19,7 @@ module Gadget = struct
 end
 
 let probe_tac = 1;;
-(* complete: let probe_tac => probe_tac:value *)
+(* complete: let probe_tac => none *)
 
 let z = ADD_S;;
 (* complete: let z = ADD_S => ADD_SYM:theorem ADD_SYM_ALT:theorem *)

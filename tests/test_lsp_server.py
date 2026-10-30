@@ -240,9 +240,17 @@ def test_completion_suggests_names_members_and_files():
         )
         [found] = client.request(
             "textDocument/completion",
-            {"textDocument": {"uri": uri(TACTICS)}, "position": {"line": 11, "character": 14}},
+            {"textDocument": {"uri": uri(TACTICS)}, "position": {"line": 17, "character": 22}},
         )
         assert found == {"label": "HELPER_TAC", "kind": 6}
+        # At the name being defined, nothing completes.
+        assert (
+            client.request(
+                "textDocument/completion",
+                {"textDocument": {"uri": uri(TACTICS)}, "position": {"line": 11, "character": 14}},
+            )
+            == []
+        )
 
         changed = text + "let z = Kernel.kfun"
         client.notify(

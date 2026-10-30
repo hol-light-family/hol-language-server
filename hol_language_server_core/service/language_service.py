@@ -208,6 +208,8 @@ class HolLanguageService:
         files = self._completion_file_names(doc, position)
         if files is not None:
             return files
+        if self._at_binder_position(doc, position):
+            return []
         word, word_range = util.get_word_at_position(doc, position)
         if not word or word_range is None:
             return []
@@ -235,6 +237,16 @@ class HolLanguageService:
             commit_characters=["."],
             edit_range=edit_range,
         )
+
+    def _at_binder_position(self, doc: TextDoc, position: Position) -> bool:
+        """Whether the position declares a name instead of using one: after
+        `let`, `and`, `fun`, or `module`, with only names up to the cursor."""
+        before = doc.line_at(position.line)[:position.character]
+        return re.search(
+            r"\b(let\s+(?:rec\s+)?|and\s+|fun\s+|module\s+)"
+            r"(?:[A-Za-z0-9_']+\s+)*[A-Za-z0-9_']*$",
+            before,
+        ) is not None
 
     def _completion_names(self, word: str, deps: set[str], open_modules: set[Module]) -> list[Completion]:
         """Definitions and modules in deps whose names start with the word."""

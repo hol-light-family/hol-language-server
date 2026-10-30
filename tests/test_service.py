@@ -174,9 +174,6 @@ def test_completion_carries_docs_ranges_and_commit_characters():
     path = os.path.join(PROJECT, "completion.ml")
     service.index(path, True)
     doc = service.get_document(path)
-    offset = doc.text.index("let probe_tac") + len("let probe_tac")
-    [probed] = service.completion(doc, doc.position_at(offset))
-    assert (probed.label, probed.documentation, probed.edit_range) == ("probe_tac", None, None)
     offset = doc.text.index("let z = ADD_S") + len("let z = ADD_S")
     [sym, _alt] = service.completion(doc, doc.position_at(offset))
     assert sym.documentation == "Theorem `ADD_SYM`\n```\n`|- !m n. m + n = n + m`\n```"
