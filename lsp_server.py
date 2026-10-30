@@ -210,7 +210,7 @@ def create_server(service: HolLanguageService, settings: Settings,
             for target in service.definition(doc, pos)
         ]
 
-    @server.feature(lsp.TEXT_DOCUMENT_COMPLETION, lsp.CompletionOptions(trigger_characters=["/"]))
+    @server.feature(lsp.TEXT_DOCUMENT_COMPLETION, lsp.CompletionOptions(trigger_characters=["/", '"']))
     def on_completion(ls: LanguageServer, params: lsp.CompletionParams) -> list[lsp.CompletionItem]:
         doc = prepare(ls, params.text_document.uri)
         pos = CorePosition(line=params.position.line, character=params.position.character)

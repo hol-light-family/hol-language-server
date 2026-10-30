@@ -203,7 +203,7 @@ def test_initialize_advertises_the_subset():
         assert capabilities["definitionProvider"] is True
         assert capabilities["documentSymbolProvider"] is True
         assert capabilities["workspaceSymbolProvider"] == {"resolveProvider": False}
-        assert capabilities["completionProvider"] == {"triggerCharacters": ["/"]}
+        assert capabilities["completionProvider"] == {"triggerCharacters": ["/", '"']}
 
 
 def test_hover_definition_and_symbols():

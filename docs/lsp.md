@@ -33,7 +33,7 @@ The language server `hol-language-server` gives an editor lookups over HOL Light
     with the rest (`Utils.Pa` suggests `Pair`).
   - Inside `needs "..."` (also `loads`, `loadt`, and custom imports): the
     `.ml` and `.hl` files and folders under the root paths that start with
-    what is typed.
+    what is typed. Typing `"` or `/` opens the list.
   - A name being defined: nothing. After `let`, `and`, `fun`, or `module`,
     while only names follow it, the word declares a name instead of using one.
   - Inside a term: the HOL constants starting with the name. A variable the
