@@ -9,6 +9,7 @@
 
 from hol_language_server_core.service.language_service import HolLanguageService, resolve_path
 from hol_language_server_core.service.results import (
+    Completion,
     DefinitionTarget,
     MissingLoad,
     Reference,
@@ -21,6 +22,7 @@ from hol_language_server_core.service.scope import bound_names, local_binding
 from hol_language_server_core.service.terms import bound_in_term, hol_word_at, term_start
 
 __all__ = [
+    "Completion",
     "DefinitionTarget",
     "HolLanguageService",
     "MissingLoad",

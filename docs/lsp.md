@@ -25,6 +25,23 @@ The language server `hol-language-server` gives an editor lookups over HOL Light
     - Not read: constructors of `define_type`, `new_specification`, and constants named through an overloaded interface: `inv` finds nothing, and `+` finds every definition written with `+`.
     - Terms in Unicode syntax are not read.
   - On `needs "..."`, it opens the file named.
+- Completion: suggests what continues the word or path under the cursor.
+  - A name: definitions and modules in the files read whose name starts with
+    what is typed. A member of a module that is not open is suggested with
+    its module name (`Kernel.kfun2`).
+  - After a dot: the definitions and modules of the named module that start
+    with the rest (`Utils.Pa` suggests `Pair`).
+  - Inside `needs "..."` (also `loads`, `loadt`, and custom imports): the
+    `.ml` and `.hl` files and folders under the root paths that start with
+    what is typed, or under the HOL Light directory for `loads`.
+    Typing `"` or `/` opens the list.
+  - A name being defined: nothing. After `let`, `and`, `fun`, or `module`,
+    while only names follow it, the word declares a name instead of using one.
+  - Inside a term: the HOL constants starting with the name. A variable the
+    term binds completes to nothing, and an `^` antiquotation completes OCaml
+    names instead.
+  - In a comment, a string, or on an operator: nothing. Only import strings
+    complete, to file names.
 - Symbols.
   - The outline of the open file: every definition and module in it.
   - Search across all files read: names containing the search text, ignoring case, at most 1000 results.
@@ -58,7 +75,6 @@ The language server `hol-language-server` gives an editor lookups over HOL Light
 
 ## Not provided
 
-- Completion.
 - Diagnostics other than missing files, such as type errors.
 - Editor commands.
 - Anything that needs a running HOL Light, such as sending a statement or tactic to it.

@@ -7,6 +7,7 @@ import subprocess
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
 from hol_language_server_core.text import TextDoc
@@ -14,6 +15,7 @@ from hol_server_paths import PROJECT
 
 SERVER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lsp_server.py")
 TACTICS = os.path.join(PROJECT, "tactics.ml")
+CONSTANTS = os.path.join(PROJECT, "constants.ml")
 
 
 def uri(path: str) -> str:
@@ -202,6 +204,7 @@ def test_initialize_advertises_the_subset():
         assert capabilities["definitionProvider"] is True
         assert capabilities["documentSymbolProvider"] is True
         assert capabilities["workspaceSymbolProvider"] == {"resolveProvider": False}
+        assert capabilities["completionProvider"] == {"triggerCharacters": ["/", '"']}
 
 
 def test_hover_definition_and_symbols():
@@ -225,6 +228,95 @@ def test_hover_definition_and_symbols():
         assert [s["name"] for s in found] == ["HELPER_TAC"]
 
         client.notify("textDocument/didClose", {"textDocument": {"uri": uri(TACTICS)}})
+
+
+def test_completion_suggests_names_members_and_files():
+    from hol_server_paths import HOL
+
+    with start_server(HOL) as (client, _):
+        with open(TACTICS, encoding="utf-8") as handle:
+            text = handle.read()
+        client.notify(
+            "textDocument/didOpen",
+            {"textDocument": {"uri": uri(TACTICS), "languageId": "ocaml", "version": 1, "text": text}},
+        )
+        [found] = client.request(
+            "textDocument/completion",
+            {"textDocument": {"uri": uri(TACTICS)}, "position": {"line": 17, "character": 22}},
+        )
+        assert found == {"label": "HELPER_TAC", "kind": 6}
+        # At the name being defined, nothing completes.
+        assert (
+            client.request(
+                "textDocument/completion",
+                {"textDocument": {"uri": uri(TACTICS)}, "position": {"line": 11, "character": 14}},
+            )
+            == []
+        )
+        # In a comment, nothing completes either.
+        assert (
+            client.request(
+                "textDocument/completion",
+                {"textDocument": {"uri": uri(TACTICS)}, "position": {"line": 4, "character": 14}},
+            )
+            == []
+        )
+
+        changed = text + "let z = Kernel.kfun"
+        client.notify(
+            "textDocument/didChange",
+            {"textDocument": {"uri": uri(TACTICS), "version": 2},
+             "contentChanges": [{"text": changed}]},
+        )
+        members = client.request(
+            "textDocument/completion",
+            {"textDocument": {"uri": uri(TACTICS)},
+             "position": {"line": text.count("\n"), "character": len("let z = Kernel.kfun")}},
+        )
+        assert [item["label"] for item in members] == ["kfun", "kfun2"]
+        for item in members:
+            edit = item["textEdit"]
+            assert (edit["range"]["start"]["character"], edit["range"]["end"]["character"]) == (15, 19)
+            assert edit["newText"] == item["label"]
+
+        client.notify(
+            "textDocument/didChange",
+            {"textDocument": {"uri": uri(TACTICS), "version": 3},
+             "contentChanges": [{"text": 'needs "lib/u'}]},
+        )
+        files = client.request(
+            "textDocument/completion",
+            {"textDocument": {"uri": uri(TACTICS)},
+             "position": {"line": 0, "character": len('needs "lib/u')}},
+        )
+        assert {item["label"] for item in files} == {"util.ml"}
+        assert files[0]["kind"] == 17
+        assert files[0]["sortText"] == " util.ml"
+        client.notify("textDocument/didClose", {"textDocument": {"uri": uri(TACTICS)}})
+
+
+def test_term_completion_suggests_constants():
+    from hol_server_paths import HOL
+
+    with start_server(HOL) as (client, _):
+        with open(CONSTANTS, encoding="utf-8") as handle:
+            text = handle.read()
+        client.notify(
+            "textDocument/didOpen",
+            {"textDocument": {"uri": uri(CONSTANTS), "languageId": "ocaml", "version": 1, "text": text}},
+        )
+        members = client.request(
+            "textDocument/completion",
+            {"textDocument": {"uri": uri(CONSTANTS)},
+             "position": {"line": 46, "character": 55}},
+        )
+        assert [(item["label"], item["kind"]) for item in members] == [
+            ("fibonacci", 21), ("fib", 21), ("fib3", 21)]
+        for item in members:
+            edit = item["textEdit"]
+            assert (edit["range"]["start"]["character"], edit["range"]["end"]["character"]) == (52, 55)
+            assert edit["newText"] == item["label"]
+        client.notify("textDocument/didClose", {"textDocument": {"uri": uri(CONSTANTS)}})
 
 
 def test_definitions_in_comments_are_not_published():
@@ -267,6 +359,50 @@ def test_bad_settings_fail_initialize():
     finally:
         proc.kill()
         proc.wait(timeout=30)
+
+
+def test_completion_converts_utf16_columns(tmp_path: Path):
+    from hol_server_paths import HOL
+
+    (tmp_path / "🙂dir").mkdir()
+    (tmp_path / "🙂dir" / "x.ml").write_text("let x = 1;;\n", encoding="utf-8")
+    path = str(tmp_path / "t.ml")
+    # The cursor sits after `x`: UTF-16 column 14, code-point column 13.
+    text = 'needs "🙂dir/x";;'
+    with start_server(HOL) as (client, _):
+        client.notify(
+            "textDocument/didOpen",
+            {"textDocument": {"uri": uri(path), "languageId": "ocaml", "version": 1, "text": text}},
+        )
+        [item] = client.request(
+            "textDocument/completion",
+            {"textDocument": {"uri": uri(path)}, "position": {"line": 0, "character": 14}},
+        )
+        assert item["label"] == "x.ml"
+        assert item["textEdit"]["range"] == {
+            "start": {"line": 0, "character": 13}, "end": {"line": 0, "character": 14}}
+        client.notify("textDocument/didClose", {"textDocument": {"uri": uri(path)}})
+
+
+def test_definition_converts_utf16_columns(tmp_path: Path):
+    from hol_server_paths import HOL
+
+    (tmp_path / "u.ml").write_text("(* 🙂 *) let foo = 1;;\n", encoding="utf-8")
+    path = str(tmp_path / "t.ml")
+    text = 'needs "u.ml";;\nlet z = foo;;\n'
+    with start_server(HOL) as (client, _):
+        client.notify(
+            "textDocument/didOpen",
+            {"textDocument": {"uri": uri(path), "languageId": "ocaml", "version": 1, "text": text}},
+        )
+        targets = client.request(
+            "textDocument/definition",
+            {"textDocument": {"uri": uri(path)}, "position": {"line": 1, "character": 10}},
+        )
+        [target] = [t for t in targets if t["uri"] == uri(str(tmp_path / "u.ml"))]
+        assert target["range"] == {
+            "start": {"line": 0, "character": 13}, "end": {"line": 0, "character": 13}}
+        client.notify("textDocument/didClose", {"textDocument": {"uri": uri(path)}})
 
 
 def test_unresolved_loads_are_shown():
