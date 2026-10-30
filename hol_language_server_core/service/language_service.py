@@ -7,9 +7,10 @@ from collections.abc import Callable
 from hol_language_server_core import util
 from hol_language_server_core.config import Settings, expand_root_paths
 from hol_language_server_core.database import Database, Dependency
-from hol_language_server_core.parser import OCAML_KEYWORDS, Definition, Module, skip_comments
-from hol_language_server_core.service.results import (DefinitionTarget, MissingLoad, Reference, SourceInfo,
-                                                      SymbolInfo, definition_symbol, module_symbol)
+from hol_language_server_core.parser import (OCAML_KEYWORDS, DEFINITION_TYPE_NAMES, Definition, DefinitionType,
+                                             Module, skip_comments)
+from hol_language_server_core.service.results import (Completion, DefinitionTarget, MissingLoad, Reference,
+                                                      SourceInfo, SymbolInfo, definition_symbol, module_symbol)
 from hol_language_server_core.service.scope import bound_names, local_binding
 from hol_language_server_core.service.terms import bound_in_term, hol_word_at, term_start
 from hol_language_server_core.service.tokens import REFERENCE_RE, is_name_start
@@ -199,6 +200,99 @@ class HolLanguageService:
             DefinitionTarget(loc.path, loc.range)
             for loc in (found.get_location() for found in [*defs, *mods])
         ]
+
+    def completion(self, doc: TextDoc, position: Position) -> list[Completion]:
+        """Names, module members, or import paths completing the position."""
+        if position.line < 0 or position.line >= doc.line_count:
+            return []
+        files = self._completion_file_names(doc, position)
+        if files is not None:
+            return files
+        word, word_range = util.get_word_at_position(doc, position)
+        if not word or word_range is None:
+            return []
+        deps = self.database.all_dependencies(doc.path)
+        open_modules = self.database.all_open_modules(doc.path, doc.offset_at(position), deps)
+        if "." in word:
+            return self._completion_qualified(word, word_range, position, deps, open_modules)
+        return self._completion_names(word, deps, open_modules)
+
+    def _definition_completion(self, definition: Definition, qualified: bool,
+                               edit_range: Range | None = None) -> Completion:
+        return Completion(
+            label=definition.full_name if qualified else definition.name,
+            kind=DEFINITION_TYPE_NAMES[definition.def_type],
+            documentation=definition.to_string() if definition.def_type != DefinitionType.other else None,
+            edit_range=edit_range,
+        )
+
+    def _module_completion(self, module: Module, qualified: bool,
+                           edit_range: Range | None = None) -> Completion:
+        return Completion(
+            label=module.full_name if qualified else module.name,
+            kind="module",
+            documentation=module.to_string(),
+            commit_characters=["."],
+            edit_range=edit_range,
+        )
+
+    def _completion_names(self, word: str, deps: set[str], open_modules: set[Module]) -> list[Completion]:
+        """Definitions and modules in deps whose names start with the word."""
+        defs, mods = self.database.filter_by_name(lambda name: name.startswith(word), deps)
+        items = [self._module_completion(mod, mod.parent is not None and mod.parent not in open_modules)
+                 for mod in mods]
+        items.extend(self._definition_completion(defn, defn.module is not None and defn.module not in open_modules)
+                     for defn in defs)
+        return items
+
+    def _completion_qualified(self, word: str, word_range: Range, position: Position,
+                              deps: set[str], open_modules: set[Module]) -> list[Completion]:
+        """Members of the modules the dotted word names, starting with its last segment."""
+        typed = word[:position.character - word_range.start.character]
+        head, _, prefix = typed.rpartition(".")
+        modules = sorted(self.database.resolve_module_name(head, open_modules, deps),
+                         key=lambda mod: (mod.get_file_path(), mod.start))
+        edit_range = Range(position.with_(character=position.character - len(prefix)), position)
+        defs, _ = self.database.filter_by_name(lambda name: name.startswith(prefix), deps)
+        items: list[Completion] = []
+        for module in modules:
+            items.extend(self._definition_completion(defn, False, edit_range)
+                         for defn in defs if defn.module is module)
+            items.extend(self._module_completion(mod, False, edit_range)
+                         for mod in module.modules if mod.name.startswith(prefix))
+        return items
+
+    def _completion_file_names(self, doc: TextDoc, position: Position) -> list[Completion] | None:
+        """Files and folders completing an import string, or None outside one."""
+        imports = ["needs", "loads", "loadt", *self._settings.custom_commands.imports]
+        match = re.match(r'^\s*(?:' + "|".join(imports) + r')\s*"', doc.line_at(position.line))
+        if match is None or position.character < len(match.group(0)):
+            return None
+        prefix = doc.line_at(position.line)[len(match.group(0)):position.character]
+        if '"' in prefix:
+            return None
+        directory, _, name_prefix = prefix.rpartition("/")
+        name_start = position.character - len(name_prefix)
+        edit_range = Range(position.with_(character=name_start), position)
+        items: list[Completion] = []
+        for root in self.root_paths:
+            base = os.path.dirname(doc.path) if root == "." else root
+            try:
+                entries = util.read_dir(os.path.join(base, directory))
+            except OSError:
+                # A path that does not exist completes to nothing.
+                continue
+            for entry in entries:
+                if entry.name.startswith(".") or not entry.name.startswith(name_prefix):
+                    continue
+                is_dir = entry.is_dir(follow_symlinks=False)
+                if not is_dir and not entry.name.endswith((".ml", ".hl")):
+                    continue
+                items.append(Completion(label=entry.name, kind="folder" if is_dir else "file",
+                                        sort_text=" " + entry.name,
+                                        commit_characters=["/"] if is_dir else None,
+                                        edit_range=edit_range))
+        return items
 
     def missing_loads(self, file_path: str) -> dict[str, list[MissingLoad]]:
         """For the file and every file it sees, the loads in it that cannot be
