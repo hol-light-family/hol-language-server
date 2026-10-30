@@ -252,6 +252,14 @@ def test_completion_suggests_names_members_and_files():
             )
             == []
         )
+        # In a comment, nothing completes either.
+        assert (
+            client.request(
+                "textDocument/completion",
+                {"textDocument": {"uri": uri(TACTICS)}, "position": {"line": 4, "character": 14}},
+            )
+            == []
+        )
 
         changed = text + "let z = Kernel.kfun"
         client.notify(

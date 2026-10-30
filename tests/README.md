@@ -105,6 +105,7 @@ let z = ADD_S;;
   For `complete`, the cursor sits after `use`, plus `+skip` characters.
 - Each comment goes after the code it names. A use or target resolves
   to its first occurrence, which must be the code, not another comment.
+  A `complete` probe of a comment targets the comment itself.
 - A completion probe is code too, so its binder is indexed and matches
   later probes. Keep binder names out of the prefixes under test.
 - An import probe resolves: every `needs` string in `completion_files.ml`

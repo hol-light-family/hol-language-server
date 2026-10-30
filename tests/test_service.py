@@ -260,6 +260,18 @@ def test_completion_is_empty_without_a_word():
     assert service.completion(doc, Position(-1, 0)) == []
 
 
+def test_completion_is_empty_in_an_unclosed_comment_or_string():
+    service = example_service()
+    path = os.path.join(PROJECT, "completion.ml")
+    service.index(path, True)
+    doc = service.get_document(path)
+    probes = ["(* Gadget widg", 'let s = "hello Gad', "(* outer (* x *) Gadget widg"]
+    for probe in probes:
+        changed = service.open_document(path, doc.text + "\n" + probe)
+        position = Position(changed.line_count - 1, len(probe))
+        assert service.completion(changed, position) == []
+
+
 # ================ Symbols: document order, predicate search. =================
 def test_document_symbols_are_position_ordered():
     service = example_service()

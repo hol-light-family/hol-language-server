@@ -211,10 +211,12 @@ class HolLanguageService:
         terms = self._completion_terms(doc, position)
         if terms is not None:
             return terms
+        if self._in_comment_or_string(doc, position):
+            return []
         if self._at_binder_position(doc, position):
             return []
         word, word_range = util.get_word_at_position(doc, position)
-        if not word or word_range is None:
+        if not word or word_range is None or util.is_operator_word(word):
             return []
         deps = self.database.all_dependencies(doc.path)
         open_modules = self.database.all_open_modules(doc.path, doc.offset_at(position), deps)
@@ -273,6 +275,29 @@ class HolLanguageService:
         found = self.database.filter_constants_by_name(lambda name: name.startswith(prefix), deps)
         edit_range = Range(position.with_(character=begin), position.with_(character=end))
         return [self._definition_completion(constant, False, edit_range) for constant in found]
+
+    def _in_comment_or_string(self, doc: TextDoc, position: Position) -> bool:
+        """Whether the position is inside a comment or a string: tokenize
+        like term_start, with an unclosed quote running to the end."""
+        text, offset = doc.text, doc.offset_at(position)
+        pos = 0
+        while True:
+            match = REFERENCE_RE.search(text, pos)
+            quote = text.find('"', pos)
+            if quote != -1 and quote < offset and (match is None or quote < match.start()):
+                # A quote no token starts at: an unclosed string, or inside one.
+                return True
+            if match is None or match.start() >= offset:
+                return False
+            if match.group(0) == "(*":
+                pos = skip_comments(text, match.start())
+                if pos > offset or (pos == offset == len(text) and not text.endswith("*)")):
+                    # An unclosed comment runs past the end of the text.
+                    return True
+                continue
+            if match.end() > offset:
+                return match.group(0).startswith('"')
+            pos = match.end()
 
     def _at_binder_position(self, doc: TextDoc, position: Position) -> bool:
         """Whether the position declares a name instead of using one: after

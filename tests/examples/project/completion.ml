@@ -64,3 +64,14 @@ let z = Kernel.zzz;;
 
 let t = `!E. E`;;
 (* complete: let t = `!E. E => none *)
+
+(* Gadget widget sprocket *)
+(* complete: Gadget widget => none *)
+
+let greeting = "hello Gadget";;
+(* complete: hello Gadget => none *)
+
+let (+/) x y = x;;
+
+let sum = 1 + 2;;
+(* complete: 1 + => none *)
