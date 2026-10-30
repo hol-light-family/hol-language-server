@@ -1,6 +1,7 @@
 (* Import path completion.
    Probes complete workspace entries: a folder, a file by prefix, by
-   directory, and by longer prefix, and the cursor past the closing quote.
+   directory, and by longer prefix, the cursor past the closing quote,
+   an import past the line start, and a second import on one line.
    Every probe string resolves, so the file adds no missing load to the
    workspace-wide tests. The driver test uses the default roots.
    Checked: the labels and kinds in the `complete` comments. *)
@@ -19,3 +20,9 @@ needs "ctx.ml";;
 
 needs "tactics.ml";;
 (* complete: needs "tact => tactics.ml:file *)
+
+if true then needs "lib/util.ml" else needs "lib/util.ml";;
+(* complete: then needs "lib/u => util.ml:file *)
+
+needs "lib/util.ml";; needs "lib/util.ml";;
+(* complete: needs "lib/util.ml";; needs "lib/u => util.ml:file *)

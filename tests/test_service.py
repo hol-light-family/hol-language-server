@@ -280,6 +280,28 @@ def test_completion_lists_import_paths(tmp_path: Path):
     assert service.completion(doc, Position(0, len(doc.text))) == []
 
 
+def test_imports_past_the_line_start_are_found(tmp_path: Path):
+    (tmp_path / "u.ml").write_text("let u = 1;;\n")
+    text = 'if true\nthen needs "u.ml"\nelse loads "u.ml";;\nlet _ = (needs "u.ml");;\n'
+    settings = default_settings()
+    settings.hol_path = HOL
+    settings.workspace = str(tmp_path)
+    settings.root_paths = ["."]
+    service = HolLanguageService(settings)
+    path = str(tmp_path / "t.ml")
+    doc = service.open_document(path, text)
+    service.index(path, True)
+    file = service.database.get_file_index(path)
+    assert file is not None
+    assert [dep.name for dep in file.dependencies] == ["u.ml", "u.ml", "u.ml"]
+    [missing] = service.missing_loads(path)[path]
+    assert (missing.name, missing.range.start.line) == ("u.ml", 2)
+    [target] = service.definition(doc, Position(3, 17))
+    assert target.path == str(tmp_path / "u.ml")
+    items = service.completion(TextDoc(path, '(needs "u'), Position(0, len('(needs "u')))
+    assert [(item.label, item.kind) for item in items] == [("u.ml", "file")]
+
+
 def test_completion_is_empty_without_a_word():
     service = example_service()
     doc = tactics_doc(service)

@@ -175,10 +175,12 @@ class HolLanguageService:
         if position.line < 0 or position.line >= doc.line_count:
             return []
         imports = ["needs", "loads", "loadt", *self._settings.custom_commands.imports]
-        m = re.match(r'^\s*(?:' + "|".join(imports) + r')\s*"(.*?)"', doc.line_at(position.line))
-        if m:
+        line = doc.line_at(position.line)
+        for m in re.finditer(r'\b(?:' + "|".join(imports) + r')\s*"(.*?)"', line):
             text = m.group(0)
-            if text.find('"') <= position.character <= text.rfind('"'):
+            first = m.start() + text.find('"')
+            last = m.start() + text.rfind('"')
+            if first <= position.character <= last:
                 dep = self.database.find_dependency(doc.path, m.group(1))
                 loc = dep.get_location() if dep is not None else None
                 if loc is None:
@@ -346,10 +348,14 @@ class HolLanguageService:
     def _completion_file_names(self, doc: TextDoc, position: Position) -> list[Completion] | None:
         """Files and folders completing an import string, or None outside one."""
         imports = ["needs", "loads", "loadt", *self._settings.custom_commands.imports]
-        match = re.match(r'^\s*(' + "|".join(imports) + r')\s*"', doc.line_at(position.line))
-        if match is None or position.character < len(match.group(0)):
+        line = doc.line_at(position.line)
+        # The last import opened at or before the cursor; a line holds several.
+        opens = [m for m in re.finditer(r'\b(' + "|".join(imports) + r')\s*"', line)
+                 if m.end() <= position.character]
+        if not opens:
             return None
-        prefix = doc.line_at(position.line)[len(match.group(0)):position.character]
+        match = opens[-1]
+        prefix = line[match.end():position.character]
         if '"' in prefix:
             return None
         directory, _, name_prefix = prefix.rpartition("/")
