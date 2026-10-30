@@ -254,6 +254,11 @@ def test_completion_lists_import_paths(tmp_path: Path):
     assert (found.label, found.kind) == ("marker.ml", "file")
     doc = TextDoc(path, 'loads "l')
     assert service.completion(doc, Position(0, len('loads "l'))) == []
+    doc = TextDoc(path, 'needs "lib/util.ml')
+    items = service.completion(doc, Position(0, len('needs "li')))
+    [folder] = [item for item in items if item.label == "lib"]
+    assert folder.edit_range is not None
+    assert (folder.edit_range.start.character, folder.edit_range.end.character) == (7, 10)
     doc = TextDoc(path, 'my_needs "lib/u')
     [found] = service.completion(doc, Position(0, len('my_needs "lib/u')))
     assert found.label == "util.ml"

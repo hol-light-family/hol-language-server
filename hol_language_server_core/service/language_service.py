@@ -346,7 +346,12 @@ class HolLanguageService:
             return None
         directory, _, name_prefix = prefix.rpartition("/")
         name_start = position.character - len(name_prefix)
-        edit_range = Range(position.with_(character=name_start), position)
+        line = doc.line_at(position.line)
+        name_end = position.character
+        # The edit covers the rest of the path segment too.
+        while name_end < len(line) and line[name_end] not in "/\"":
+            name_end += 1
+        edit_range = Range(position.with_(character=name_start), position.with_(character=name_end))
         items: list[Completion] = []
         searched: set[str] = set()
         # `loads` resolves under the HOL Light directory only.
