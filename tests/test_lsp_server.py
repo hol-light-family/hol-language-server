@@ -244,7 +244,9 @@ def test_completion_suggests_names_members_and_files():
             "textDocument/completion",
             {"textDocument": {"uri": uri(TACTICS)}, "position": {"line": 17, "character": 22}},
         )
-        assert found == {"label": "HELPER_TAC", "kind": 6}
+        assert found == {"label": "HELPER_TAC", "kind": 6, "textEdit": {
+            "range": {"start": {"line": 17, "character": 12}, "end": {"line": 17, "character": 22}},
+            "newText": "HELPER_TAC"}}
         # At the name being defined, nothing completes.
         assert (
             client.request(

@@ -184,11 +184,13 @@ def test_completion_carries_docs_ranges_and_commit_characters():
     offset = doc.text.index("let z = ADD_S") + len("let z = ADD_S")
     [sym, _alt] = service.completion(doc, doc.position_at(offset))
     assert sym.documentation == "Theorem `ADD_SYM`\n```\n`|- !m n. m + n = n + m`\n```"
-    assert sym.edit_range is None
+    assert sym.edit_range is not None
+    assert (sym.edit_range.start.character, sym.edit_range.end.character) == (8, 13)
     offset = doc.text.index("let z = Inne") + len("let z = Inne")
     [inner] = service.completion(doc, doc.position_at(offset))
-    assert (inner.documentation, inner.commit_characters, inner.edit_range) == (
-        "Module `Gadget.Inner`", ["."], None)
+    assert (inner.documentation, inner.commit_characters) == ("Module `Gadget.Inner`", ["."])
+    assert inner.edit_range is not None
+    assert (inner.edit_range.start.character, inner.edit_range.end.character) == (8, 12)
     offset = doc.text.index("let q = Gadget.Inne") + len("let q = Gadget.Inne")
     [member] = service.completion(doc, doc.position_at(offset))
     assert (member.documentation, member.commit_characters) == ("Module `Gadget.Inner`", ["."])
@@ -229,6 +231,23 @@ def test_completion_covers_the_qualified_segment():
     assert member.label == "Inner"
     assert member.edit_range is not None
     assert (member.edit_range.start.character, member.edit_range.end.character) == (16, 21)
+
+
+def test_completion_covers_the_unqualified_segment():
+    service = example_service()
+    path = os.path.join(PROJECT, "completion.ml")
+    service.index(path, True)
+    doc = service.get_document(path)
+    offset = doc.text.index("let m = Kernel.kfun") + len("let m = Ke")
+    [kernel] = service.completion(doc, doc.position_at(offset))
+    assert (kernel.label, kernel.kind) == ("Kernel", "module")
+    assert kernel.edit_range is not None
+    assert (kernel.edit_range.start.character, kernel.edit_range.end.character) == (8, 14)
+    offset = doc.text.index("let z = probe_tac.foo") + len("let z = probe_t")
+    [tac] = service.completion(doc, doc.position_at(offset))
+    assert (tac.label, tac.kind) == ("probe_tac", "value")
+    assert tac.edit_range is not None
+    assert (tac.edit_range.start.character, tac.edit_range.end.character) == (8, 17)
 
 
 def test_completion_lists_import_paths(tmp_path: Path):

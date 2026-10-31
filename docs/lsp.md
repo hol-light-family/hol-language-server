@@ -28,7 +28,8 @@ The language server `hol-language-server` gives an editor lookups over HOL Light
 - Completion: suggests what continues the word or path under the cursor.
   - A name: definitions and modules in the files read whose name starts with
     what is typed. A member of a module that is not open is suggested with
-    its module name (`Kernel.kfun2`).
+    its module name (`Kernel.kfun2`). At the start of a word nothing is
+    typed yet, so nothing is suggested.
   - After a dot: the definitions and modules of the named module that start
     with the rest (`Utils.Pa` suggests `Pair`).
   - Inside `needs "..."` (also `loads`, `loadt`, and custom imports): the

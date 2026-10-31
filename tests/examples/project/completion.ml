@@ -2,7 +2,9 @@
    Loads lib/util.ml for ADD_SYM_ALT; the base files give ADD_SYM and Kernel.
    Gadget and Gadget.Inner are defined here and stay closed until `open Gadget`,
    so their members complete with qualified labels before it and short ones after.
-   The mid-word probe completes with the cursor inside the word, not after it.
+   Mid-word probes complete with the cursor inside the word, not after it: a
+   name filters on the text before the cursor, and before the dot the head
+   name itself completes. Word-start probes complete to nothing.
    Checked: the labels and kinds in the `complete` comments. Docs, edit spans,
    and commit characters stay procedural in test_service.py. *)
 
@@ -23,6 +25,9 @@ let probe_tac = 1;;
 
 let z = ADD_S;;
 (* complete: let z = ADD_S => ADD_SYM:theorem ADD_SYM_ALT:theorem *)
+
+let z = ADD_SYM_ALT;;
+(* complete: let z = ADD_SYM => ADD_SYM:theorem ADD_SYM_ALT:theorem *)
 
 let z = widg;;
 (* complete: let z = widg => Gadget.widget:value *)
@@ -47,6 +52,12 @@ let z = Kernel.kfun;;
 
 let m = Kernel.kfun
 (* complete: let m = Kernel.kf => kfun:value kfun2:value *)
+(* complete: let m = Kernel => Kernel:module *)
+(* complete: let m = +1 => none *)
+(* complete: let z = +1 => none *)
+
+let z = probe_tac.foo;;
+(* complete: let z = probe_t => probe_tac:value *)
 
 let w = Kernel.;;
 (* complete: let w = Kernel. => kfun:value kfun2:value *)

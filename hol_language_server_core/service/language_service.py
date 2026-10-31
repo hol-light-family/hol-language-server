@@ -221,11 +221,15 @@ class HolLanguageService:
         word, word_range = util.get_word_at_position(doc, position)
         if not word or word_range is None or util.is_operator_word(word):
             return []
+        typed = word[:position.character - word_range.start.character]
+        if not typed:
+            # At the start of the word nothing is typed yet: no prefix to filter on.
+            return []
         deps = self.database.all_dependencies(doc.path)
         open_modules = self.database.all_open_modules(doc.path, doc.offset_at(position), deps)
-        if "." in word:
+        if "." in typed:
             return self._completion_qualified(word, word_range, position, deps, open_modules)
-        return self._completion_names(word, deps, open_modules)
+        return self._completion_names(word, word_range, position, deps, open_modules)
 
     def _definition_completion(self, definition: Definition, qualified: bool,
                                edit_range: Range | None = None) -> Completion:
@@ -312,12 +316,28 @@ class HolLanguageService:
             before,
         ) is not None
 
-    def _completion_names(self, word: str, deps: set[str], open_modules: set[Module]) -> list[Completion]:
-        """Definitions and modules in deps whose names start with the word."""
-        defs, mods = self.database.filter_by_name(lambda name: name.startswith(word), deps)
-        items = [self._module_completion(mod, mod.parent is not None and mod.parent not in open_modules)
+    def _completion_edit_range(self, word: str, word_range: Range, position: Position,
+                               edit_start: int) -> Range:
+        """The span an accepted completion replaces, from edit_start over the rest of the name part."""
+        edit_end = position.character
+        for char in word[edit_end - word_range.start.character:]:
+            # The edit covers the rest of the name too, stopping at a dot.
+            if char not in string.ascii_letters + string.digits + "_'":
+                break
+            edit_end += 1
+        return Range(position.with_(character=edit_start), position.with_(character=edit_end))
+
+    def _completion_names(self, word: str, word_range: Range, position: Position,
+                          deps: set[str], open_modules: set[Module]) -> list[Completion]:
+        """Definitions and modules in deps whose names start with the typed prefix."""
+        prefix = word[:position.character - word_range.start.character]
+        edit_range = self._completion_edit_range(word, word_range, position, word_range.start.character)
+        defs, mods = self.database.filter_by_name(lambda name: name.startswith(prefix), deps)
+        items = [self._module_completion(mod, mod.parent is not None and mod.parent not in open_modules,
+                                         edit_range)
                  for mod in mods]
-        items.extend(self._definition_completion(defn, defn.module is not None and defn.module not in open_modules)
+        items.extend(self._definition_completion(defn, defn.module is not None and defn.module not in open_modules,
+                                                 edit_range)
                      for defn in defs)
         return items
 
@@ -328,14 +348,8 @@ class HolLanguageService:
         head, _, prefix = typed.rpartition(".")
         modules = sorted(self.database.resolve_module_name(head, open_modules, deps),
                          key=lambda mod: (mod.get_file_path(), mod.start))
-        edit_start = position.character - len(prefix)
-        edit_end = position.character
-        for char in word[edit_end - word_range.start.character:]:
-            # The edit covers the rest of the name too.
-            if char not in string.ascii_letters + string.digits + "_'":
-                break
-            edit_end += 1
-        edit_range = Range(position.with_(character=edit_start), position.with_(character=edit_end))
+        edit_range = self._completion_edit_range(word, word_range, position,
+                                                  position.character - len(prefix))
         defs, _ = self.database.filter_by_name(lambda name: name.startswith(prefix), deps)
         items: list[Completion] = []
         for module in modules:
