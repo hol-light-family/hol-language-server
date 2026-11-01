@@ -6,13 +6,14 @@ import logging
 import os
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from hol_language_server_core import util
 from hol_language_server_core.config import DEBUG
 from hol_language_server_core.parser import (CustomCommands, Definition, Module, OpenDecl, ParseResult,
                                              declared_infixes, parse_text)
 from hol_language_server_core.parser import Dependency as ParsedDependency
-from hol_language_server_core.text import Location, Position, Range, TextDoc, location
+from hol_language_server_core.text import Location, Position, Range, TextDoc, astral_lines, location
 
 logger = logging.getLogger(__name__)
 
@@ -72,8 +73,12 @@ class FileIndex:
     """Everything indexed for one file: its dependencies, definitions, HOL
     constants, modules, and the module tracking its open/include statements."""
 
-    def __init__(self, mtime: float | None, dependencies: list[Dependency], result: ParseResult) -> None:
+    def __init__(self, mtime: float | None, dependencies: list[Dependency], result: ParseResult,
+                 astral: dict[int, str]) -> None:
         self.mtime = mtime
+        # The text's lines outside the Basic Multilingual Plane, for UTF-16
+        # columns without reading the file again.
+        self.astral_lines = astral
         # Resolved and unresolved dependencies. May be cyclic (`needs`
         # allows cyclic dependencies, but the result could be unpredictable).
         self.dependencies = dependencies
@@ -81,6 +86,23 @@ class FileIndex:
         self.constants = result.constants
         self.modules = result.modules
         self.global_module = result.global_module
+
+
+def _text_key(text: str) -> tuple[int, int]:
+    """Length and hash of the text, standing in for it. Python caches a
+    string's hash on the string, so a request on unchanged text hashes nothing,
+    and changed text is always a new string with its own hash."""
+    return len(text), hash(text)
+
+
+@dataclass
+class _ParsedDocument:
+    """The last parse of a document, with the text it was parsed from, as
+    `_text_key`, and the settings."""
+    text_key: tuple[int, int]
+    custom: CustomCommands
+    infixes: frozenset[str]
+    result: ParseResult
 
 
 class Database:
@@ -102,6 +124,9 @@ class Database:
         self._open_modules_cache: dict[str, set[Module]] = {}
         self._loaders: dict[str, list[tuple[str, int]]] | None = None
         self._base_hol_light_indexed = False
+        # The last parse of each indexed document, reused while its text is
+        # unchanged. Keys the text by `_text_key`, not the text, to keep no copy.
+        self._parsed_documents: dict[str, _ParsedDocument] = {}
 
     def is_base_hol_light_file(self, file_path: str) -> bool:
         return file_path in self._base_hol_light_files
@@ -123,6 +148,15 @@ class Database:
                 mods.extend(m for m in items if deps is None or m.get_file_path() in deps)
         return defs, mods
 
+    def filter_constants_by_name(self, predicate: Callable[[str], bool],
+                                 deps: set[str]) -> list[Definition]:
+        """HOL constants whose names satisfy the predicate, in deps."""
+        found: list[Definition] = []
+        for name, items in self._constant_index.items():
+            if predicate(name):
+                found.extend(c for c in items if c.get_file_path() in deps)
+        return found
+
     def find_dependency(self, file_path: str, name: str) -> Dependency | None:
         file = self._file_index.get(file_path)
         if file is None:
@@ -133,10 +167,10 @@ class Database:
         return None
 
     def _add_to_index(self, file_path: str, result: ParseResult, deps: list[Dependency],
-                      mtime: float | None) -> None:
+                      mtime: float | None, astral: dict[int, str]) -> None:
         self._remove_from_index(file_path)
         self._invalidate_caches()
-        self._file_index[file_path] = FileIndex(mtime, deps, result)
+        self._file_index[file_path] = FileIndex(mtime, deps, result, astral)
 
         def add[T: (Definition, Module)](index: dict[str, list[T]], items: list[T]) -> None:
             for item in items:
@@ -172,7 +206,10 @@ class Database:
         mtime = os.stat(file_path).st_mtime
         known = file.mtime if file is not None and file.mtime is not None else -1
         if mtime > known:
-            result = parse_text(util.read_text(file_path), file_path, custom, self._infixes)
+            text = util.read_text(file_path)
+            result = parse_text(text, file_path, custom, self._infixes)
+            # The index no longer holds a document's stored parse: drop it.
+            self._parsed_documents.pop(file_path, None)
             if root_paths is None:
                 deps = []
             else:
@@ -182,7 +219,7 @@ class Database:
                     os.path.dirname(file_path),
                     root_paths,
                 )
-            self._add_to_index(file_path, result, deps, mtime)
+            self._add_to_index(file_path, result, deps, mtime, astral_lines(text))
             return True, deps
         return False, file.dependencies if file is not None else []
 
@@ -404,7 +441,16 @@ class Database:
         doc_path = document.path
         if DEBUG:
             logger.error("Indexing: %s", doc_path)
-        result = parse_text(document.text, doc_path, custom, self._infixes)
+        parsed = self._parsed_documents.get(doc_path)
+        # Requests between edits index the same text: parsing it again is most
+        # of a request's time in a large file.
+        text_key = _text_key(document.text)
+        if (parsed is not None and parsed.text_key == text_key
+                and parsed.custom == custom and parsed.infixes == self._infixes):
+            result = parsed.result
+        else:
+            result = parse_text(document.text, doc_path, custom, self._infixes)
+            self._parsed_documents[doc_path] = _ParsedDocument(text_key, custom, self._infixes, result)
         doc_dep_names = {dep.name: dep for dep in result.dependencies}
         old_file = self._file_index.get(doc_path)
         old_names = [dep.name for dep in old_file.dependencies] if old_file is not None else []
@@ -421,7 +467,7 @@ class Database:
                 if file is not None
                 else []
             )
-            self._add_to_index(doc_path, result, deps, None)
+            self._add_to_index(doc_path, result, deps, None, document.astral_lines)
             return [dep for dep in deps if not dep.is_resolved]
         if DEBUG:
             logger.error(
@@ -440,7 +486,7 @@ class Database:
         unresolved = [dep for dep in doc_deps if not dep.is_resolved]
         # A cyclic dependency on this document indexes it twice; cyclic
         # dependencies should be removed instead.
-        self._add_to_index(doc_path, result, doc_deps, None)
+        self._add_to_index(doc_path, result, doc_deps, None, document.astral_lines)
         visited = {doc_path}
         new_paths = util.filter_map(doc_deps, lambda dep: dep.path)
         queue = list(new_paths) if full_index else util.difference(new_paths, old_paths)

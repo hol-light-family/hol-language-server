@@ -1,34 +1,14 @@
-"""Where a position is inside a backquoted HOL term, the HOL name there, and
-whether the term binds it."""
+"""The HOL name at a position inside a backquoted term, and whether the
+term binds it."""
 
 import re
 
-from hol_language_server_core.parser import HOL_TOKEN_RE, skip_comments
-from hol_language_server_core.service.tokens import REFERENCE_RE
+from hol_language_server_core.parser import HOL_TOKEN_RE
 
 # A binder and the names before its dot: `!x y.`, `?x.`, `?!x.`, `\x.`,
 # `@x.`. Not the `\` of `/\` or `\/`. The names may carry types, which may
 # hold spaces (`x:24 word`), `->`, `^` and commas.
 _BINDER_RE = re.compile(r"(?<![/\\])(?:\?!|[!?\\@])(?!/)([\w'\s():^\->,]*?)\.")
-
-
-def term_start(text: str, start: int, offset: int) -> int | None:
-    """Offset of the backquote opening the HOL term the offset is inside,
-    else None. Scans text from start, which is outside comments, strings,
-    and terms."""
-    pos = start
-    while True:
-        m = REFERENCE_RE.search(text, pos)
-        if m is None or m.start() >= offset:
-            return None
-        if m.group(0) == "(*":
-            pos = skip_comments(text, m.start())
-            if pos > offset:
-                return None
-            continue
-        if m.end() > offset:
-            return m.start() if m.group(0).startswith("`") else None
-        pos = m.end()
 
 
 def _binder_names(group: str) -> list[str]:

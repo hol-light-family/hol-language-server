@@ -50,3 +50,8 @@ let USES = `2 divides_alt 4 /\ evens 4 /\ EVEN 4 /\ fib ^x_term = 1`;;
 (* goto: evens 4 => evens 0 /\ *)
 (* goto: EVEN 4 => EVEN n <=> @hol/hol.ml *)
 (* goto: fib ^x_term +5 => x_term = *)
+(* complete: `2 divides_ => divides_alt:constant *)
+(* complete: 4 /\ eve => evens:constant *)
+(* complete: evens 4 /\ EVEN => EVEN:constant *)
+(* complete: EVEN 4 /\ fib => fibonacci:constant fib:constant fib3:constant *)
+(* complete: fib ^x_term => x_term:term *)

@@ -11,7 +11,7 @@ Everything else is skipped.
 - `terms`: the constants a definition's term introduces.
 """
 
-from hol_language_server_core.parser.lexer import OCAML_KEYWORDS, ParserError, Token, TokenType, skip_comments
+from hol_language_server_core.parser.lexer import OCAML_KEYWORDS, Lexer, ParserError, Token, TokenType, skip_comments
 from hol_language_server_core.parser.model import (
     DEFINITION_TYPE_NAMES,
     CustomCommands,
@@ -33,6 +33,7 @@ __all__ = [
     "Definition",
     "DefinitionType",
     "Dependency",
+    "Lexer",
     "Module",
     "OpenDecl",
     "ParseResult",

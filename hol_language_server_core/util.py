@@ -56,6 +56,11 @@ def read_text(path: str) -> str:
 _OPERATOR_FALLBACK_RE = re.compile(r"[-+$&*/=>@^\\|~!?%<:.]")
 
 
+def is_operator_word(word: str) -> bool:
+    """Whether the word is an operator run, not a name."""
+    return bool(word) and all(_OPERATOR_FALLBACK_RE.match(char) for char in word)
+
+
 def get_word_at_position(doc: TextDoc, position: Position) -> tuple[str, Range] | tuple[None, None]:
     """The word at the position and its range, else (None, None)."""
     word_range = doc.get_word_range_at_position(position)

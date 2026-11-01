@@ -58,6 +58,21 @@ class Reference:
     symbols: list[SymbolInfo]
 
 
+@dataclass
+class Completion:
+    label: str
+    # theorem, definition, term, value, module, file, or folder.
+    kind: str
+    # Markdown shown beside the item, if any.
+    documentation: str | None = None
+    # Sort key. Files carry ' ' plus the label, so they sort first.
+    sort_text: str | None = None
+    # Characters that accept the item.
+    commit_characters: list[str] | None = None
+    # The span the label replaces. None replaces the word at the cursor.
+    edit_range: Range | None = None
+
+
 def definition_symbol(defn: Definition) -> SymbolInfo:
     return SymbolInfo(
         name=defn.name,

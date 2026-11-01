@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import cached_property
 
 # An OCaml character literal (e.g., '"' or '\''), not a prime of an identifier.
 CHAR_LITERAL = (
@@ -57,6 +58,17 @@ WORD_PATTERN = re.compile(
 )
 
 
+_ASTRAL_RE = re.compile("[\U00010000-\U0010FFFF]")
+
+
+def astral_lines(text: str) -> dict[int, str]:
+    """The lines holding a character outside the Basic Multilingual Plane,
+    by line number: the only lines where code-point and UTF-16 columns differ."""
+    if text.isascii() or _ASTRAL_RE.search(text) is None:
+        return {}
+    return {number: line for number, line in enumerate(text.split("\n")) if _ASTRAL_RE.search(line)}
+
+
 class TextDoc:
     def __init__(self, path: str, text: str) -> None:
         self.path = path
@@ -68,6 +80,10 @@ class TextDoc:
             i = text.find("\n", i) + 1
             if i <= 0:
                 break
+
+    @cached_property
+    def astral_lines(self) -> dict[int, str]:
+        return astral_lines(self.text)
 
     @property
     def line_count(self) -> int:

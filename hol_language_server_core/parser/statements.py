@@ -650,6 +650,40 @@ class Parser(Lexer):
             except ParserError as err:
                 self._report(f"Error: {err}", err.token, uri)
 
+    def _scan_imports(self, dependencies: list[Dependency]) -> None:
+        """Record every import call with its string argument, wherever it sits."""
+        state = self.save_state()
+        prev: Token | None = None
+        while True:
+            token = self.next_token()
+            if token.type == TokenType.eof:
+                break
+            if (
+                prev is not None
+                and prev.type == TokenType.identifier
+                and self._import_re.match(prev.value or "")
+                and token.type == TokenType.string
+                # Skip very long strings: most definitely invalid
+                # (probably not properly closed yet).
+                and token.end_pos - token.start_pos <= 2000
+            ):
+                text = token.get_value(self.text)[1:-1]
+                # Ignore multiline strings: legal OCaml, but a path
+                # with a newline never resolves to a file.
+                if "\n" not in text:
+                    dependencies.append(
+                        Dependency(
+                            text,
+                            (prev.value or "") == "loads",
+                            Range(
+                                token.get_start_position(self._line_starts),
+                                token.get_end_position(self._line_starts),
+                            ),
+                        )
+                    )
+            prev = token
+        self.reset_state(state)
+
     def parse(self, uri: str) -> ParseResult:
         self.pos = 0
         self._cur = None
@@ -660,6 +694,9 @@ class Parser(Lexer):
         dependencies: list[Dependency] = []
         modules: list[Module] = []
         module_stack: list[Module] = []
+
+        # Imports sit anywhere in a statement (`then loads "x"`), so they get their own scan.
+        self._scan_imports(dependencies)
 
         while self.peek().type != TokenType.eof:
             # Save and restore the state at the end of the loop: parsing may
@@ -712,28 +749,6 @@ class Parser(Lexer):
                         module.include_decls.append(decl)
                     else:
                         module.open_decls.append(decl)
-                elif self._import_re.match(statement_value):
-                    name_token = self.next_token()
-                    # Skip very long strings: most definitely invalid
-                    # (probably not properly closed yet).
-                    if (
-                        name_token.type == TokenType.string
-                        and name_token.end_pos - name_token.start_pos <= 2000
-                    ):
-                        text = name_token.get_value(self.text)[1:-1]
-                        # Ignore multiline strings: legal OCaml, but a path
-                        # with a newline never resolves to a file.
-                        if "\n" not in text:
-                            dependencies.append(
-                                Dependency(
-                                    text,
-                                    statement_token.get_value(self.text) == "loads",
-                                    Range(
-                                        name_token.get_start_position(self._line_starts),
-                                        name_token.get_end_position(self._line_starts),
-                                    ),
-                                )
-                            )
             except ParserError as err:
                 self._report(f"Error: {err}", err.token, uri)
 

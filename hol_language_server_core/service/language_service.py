@@ -2,18 +2,29 @@
 
 import os
 import re
+import string
 from collections.abc import Callable
 
 from hol_language_server_core import util
 from hol_language_server_core.config import Settings, expand_root_paths
 from hol_language_server_core.database import Database, Dependency
-from hol_language_server_core.parser import OCAML_KEYWORDS, Definition, Module, skip_comments
-from hol_language_server_core.service.results import (DefinitionTarget, MissingLoad, Reference, SourceInfo,
-                                                      SymbolInfo, definition_symbol, module_symbol)
+from hol_language_server_core.parser import (OCAML_KEYWORDS, DEFINITION_TYPE_NAMES, Definition, DefinitionType,
+                                             Module, Token, TokenType, skip_comments)
+from hol_language_server_core.service.results import (Completion, DefinitionTarget, MissingLoad, Reference,
+                                                      SourceInfo, SymbolInfo, definition_symbol, module_symbol)
 from hol_language_server_core.service.scope import bound_names, local_binding
-from hol_language_server_core.service.terms import bound_in_term, hol_word_at, term_start
-from hol_language_server_core.service.tokens import REFERENCE_RE, is_name_start
+from hol_language_server_core.service.terms import bound_in_term, hol_word_at
+from hol_language_server_core.service.tokens import REFERENCE_RE, enclosing_token, is_name_start
 from hol_language_server_core.text import Position, Range, TextDoc, location
+
+# `let`, `let rec`, `and`, `fun`, `module`, or `module type`, then names
+# only up to the word being typed: the position declares a name. A finished
+# keyword ends the run, so `let open M in x` uses x.
+_NOT_KEYWORD = r"(?!(?:" + "|".join(sorted(OCAML_KEYWORDS)) + r")(?![\w']))"
+_BINDER_SITE_RE = re.compile(
+    r"\b(?:let\s+(?:rec\s+)?|and\s+|fun\s+|module\s+(?:type\s+)?)"
+    r"(?:" + _NOT_KEYWORD + r"[A-Za-z0-9_']+\s+)*[A-Za-z0-9_']*$"
+)
 
 
 class HolLanguageService:
@@ -39,6 +50,14 @@ class HolLanguageService:
         if file_path in self._overlays:
             return self._overlays[file_path]
         return TextDoc(file_path, util.read_text(file_path))
+
+    def astral_lines(self, file_path: str) -> dict[int, str]:
+        """The file's lines outside the Basic Multilingual Plane, as indexed,
+        so converting indexed positions reads no file."""
+        file = self.database.get_file_index(file_path)
+        if file is not None:
+            return file.astral_lines
+        return self.get_document(file_path).astral_lines
 
     def index(self, file_path: str, full: bool) -> list[Dependency]:
         """Index the file and its dependencies. Returns unresolved ones."""
@@ -121,13 +140,10 @@ class HolLanguageService:
         if position.line < 0 or position.line >= doc.line_count:
             return None
         offset = doc.offset_at(position)
-        file = self.database.get_file_index(doc.path)
-        # Top-level items start outside terms: scan from the last one.
-        start = max((d.source_start for d in file.definitions
-                     if d.source_start is not None and d.source_start <= offset), default=0) if file else 0
-        term = term_start(doc.text, start, offset)
-        if term is None:
+        region = self._enclosing_token(doc, offset)
+        if region is None or region.type != TokenType.term:
             return None
+        term = region.start_pos
         line = doc.line_at(position.line)
         span = hol_word_at(line, position.character)
         if span is None:
@@ -173,10 +189,12 @@ class HolLanguageService:
         if position.line < 0 or position.line >= doc.line_count:
             return []
         imports = ["needs", "loads", "loadt", *self._settings.custom_commands.imports]
-        m = re.match(r'^\s*(?:' + "|".join(imports) + r')\s*"(.*?)"', doc.line_at(position.line))
-        if m:
+        line = doc.line_at(position.line)
+        for m in re.finditer(r'\b(?:' + "|".join(imports) + r')\s*"(.*?)"', line):
             text = m.group(0)
-            if text.find('"') <= position.character <= text.rfind('"'):
+            first = m.start() + text.find('"')
+            last = m.start() + text.rfind('"')
+            if first <= position.character <= last:
                 dep = self.database.find_dependency(doc.path, m.group(1))
                 loc = dep.get_location() if dep is not None else None
                 if loc is None:
@@ -199,6 +217,181 @@ class HolLanguageService:
             DefinitionTarget(loc.path, loc.range)
             for loc in (found.get_location() for found in [*defs, *mods])
         ]
+
+    def completion(self, doc: TextDoc, position: Position) -> list[Completion]:
+        """Names, module members, or import paths completing the position."""
+        if position.line < 0 or position.line >= doc.line_count:
+            return []
+        region = self._enclosing_token(doc, doc.offset_at(position))
+        if region is not None:
+            if region.type == TokenType.comment:
+                return []
+            if region.type == TokenType.string:
+                return self._completion_file_names(doc, position, region)
+            terms = self._completion_terms(doc, position, region.start_pos)
+            if terms is not None:
+                return terms
+            # An `^` antiquotation names an OCaml value: complete names.
+        if self._at_binder_position(doc, position):
+            return []
+        word, word_range = util.get_word_at_position(doc, position)
+        if not word or word_range is None or util.is_operator_word(word):
+            return []
+        typed = word[:position.character - word_range.start.character]
+        if not typed:
+            # At the start of the word nothing is typed yet: no prefix to filter on.
+            return []
+        deps = self.database.all_dependencies(doc.path)
+        open_modules = self.database.all_open_modules(doc.path, doc.offset_at(position), deps)
+        if "." in typed:
+            return self._completion_qualified(word, word_range, position, deps, open_modules)
+        return self._completion_names(word, word_range, position, deps, open_modules)
+
+    def _definition_completion(self, definition: Definition, qualified: bool,
+                               edit_range: Range | None = None) -> Completion:
+        return Completion(
+            label=definition.full_name if qualified else definition.name,
+            kind=DEFINITION_TYPE_NAMES[definition.def_type],
+            documentation=definition.to_string() if definition.def_type != DefinitionType.other else None,
+            edit_range=edit_range,
+        )
+
+    def _module_completion(self, module: Module, qualified: bool,
+                           edit_range: Range | None = None) -> Completion:
+        return Completion(
+            label=module.full_name if qualified else module.name,
+            kind="module",
+            documentation=module.to_string(),
+            commit_characters=["."],
+            edit_range=edit_range,
+        )
+
+    def _enclosing_token(self, doc: TextDoc, offset: int) -> Token | None:
+        """The comment, string, or term holding the offset."""
+        file = self.database.get_file_index(doc.path)
+        # Top-level items start outside all three: lex from the last one.
+        start = max((d.source_start for d in file.definitions
+                     if d.source_start is not None and d.source_start <= offset), default=0) if file else 0
+        return enclosing_token(doc.text, start, offset)
+
+    def _completion_terms(self, doc: TextDoc, position: Position, term: int) -> list[Completion] | None:
+        """Constants starting with the name at the position in the term
+        opening at term, or None in an `^` antiquotation, which names an
+        OCaml value. A variable the term binds completes to nothing."""
+        offset = doc.offset_at(position)
+        line = doc.line_at(position.line)
+        span = hol_word_at(line, position.character)
+        if span is None:
+            return []
+        begin, end = span
+        # `^x`, but not the `^` of a type such as `real^N`.
+        if line[begin - 1:begin] == "^" and not re.match(r"[\w']", line[begin - 2:begin - 1]):
+            return None
+        prefix = line[begin:position.character]
+        if not prefix:
+            return []
+        # A variable the term binds hides the constants.
+        if bound_in_term(doc.text, term, offset - position.character + begin, line[begin:end]):
+            return []
+        deps = self.database.all_dependencies(doc.path)
+        found = self.database.filter_constants_by_name(lambda name: name.startswith(prefix), deps)
+        edit_range = Range(position.with_(character=begin), position.with_(character=end))
+        return [self._definition_completion(constant, False, edit_range) for constant in found]
+
+    def _at_binder_position(self, doc: TextDoc, position: Position) -> bool:
+        """Whether the position declares a name instead of using one: the
+        line up to the cursor ends in a `_BINDER_SITE_RE` match."""
+        before = doc.line_at(position.line)[:position.character]
+        return _BINDER_SITE_RE.search(before) is not None
+
+    def _completion_edit_range(self, word: str, word_range: Range, position: Position,
+                               edit_start: int) -> Range:
+        """The span an accepted completion replaces, from edit_start over the rest of the name part."""
+        edit_end = position.character
+        for char in word[edit_end - word_range.start.character:]:
+            # The edit covers the rest of the name too, stopping at a dot.
+            if char not in string.ascii_letters + string.digits + "_'":
+                break
+            edit_end += 1
+        return Range(position.with_(character=edit_start), position.with_(character=edit_end))
+
+    def _completion_names(self, word: str, word_range: Range, position: Position,
+                          deps: set[str], open_modules: set[Module]) -> list[Completion]:
+        """Definitions and modules in deps whose names start with the typed prefix."""
+        prefix = word[:position.character - word_range.start.character]
+        edit_range = self._completion_edit_range(word, word_range, position, word_range.start.character)
+        defs, mods = self.database.filter_by_name(lambda name: name.startswith(prefix), deps)
+        items = [self._module_completion(mod, mod.parent is not None and mod.parent not in open_modules,
+                                         edit_range)
+                 for mod in mods]
+        items.extend(self._definition_completion(defn, defn.module is not None and defn.module not in open_modules,
+                                                 edit_range)
+                     for defn in defs)
+        return items
+
+    def _completion_qualified(self, word: str, word_range: Range, position: Position,
+                              deps: set[str], open_modules: set[Module]) -> list[Completion]:
+        """Members of the modules the dotted word names, starting with its last segment."""
+        typed = word[:position.character - word_range.start.character]
+        head, _, prefix = typed.rpartition(".")
+        modules = sorted(self.database.resolve_module_name(head, open_modules, deps),
+                         key=lambda mod: (mod.get_file_path(), mod.start))
+        edit_range = self._completion_edit_range(word, word_range, position,
+                                                  position.character - len(prefix))
+        defs, _ = self.database.filter_by_name(lambda name: name.startswith(prefix), deps)
+        items: list[Completion] = []
+        for module in modules:
+            items.extend(self._definition_completion(defn, False, edit_range)
+                         for defn in defs if defn.module is module)
+            items.extend(self._module_completion(mod, False, edit_range)
+                         for mod in module.modules if mod.name.startswith(prefix))
+        return items
+
+    def _completion_file_names(self, doc: TextDoc, position: Position, string: Token) -> list[Completion]:
+        """Files and folders completing the string the position is in, when
+        an import opens it on the cursor's line; else nothing."""
+        imports = ["needs", "loads", "loadt", *self._settings.custom_commands.imports]
+        quote = doc.position_at(string.start_pos)
+        line = doc.line_at(position.line)
+        command = re.search(r"\b(" + "|".join(imports) + r")\s*$", line[:quote.character])
+        if quote.line != position.line or command is None:
+            return []
+        prefix = line[quote.character + 1:position.character]
+        directory, _, name_prefix = prefix.rpartition("/")
+        name_start = position.character - len(name_prefix)
+        name_end = position.character
+        # The edit covers the rest of the path segment too.
+        while name_end < len(line) and line[name_end] not in "/\"":
+            name_end += 1
+        edit_range = Range(position.with_(character=name_start), position.with_(character=name_end))
+        items: list[Completion] = []
+        searched: set[str] = set()
+        # `loads` resolves under the HOL Light directory only.
+        roots = [self._settings.hol_path] if command.group(1) == "loads" else self.root_paths
+        for root in roots:
+            base = os.path.dirname(doc.path) if root == "." else root
+            search_dir = os.path.abspath(os.path.join(base, directory))
+            if search_dir in searched:
+                # Two roots over one directory list it once.
+                continue
+            searched.add(search_dir)
+            try:
+                entries = util.read_dir(os.path.join(base, directory))
+            except OSError:
+                # A path that does not exist completes to nothing.
+                continue
+            for entry in entries:
+                if entry.name.startswith(".") or not entry.name.startswith(name_prefix):
+                    continue
+                # A link to a folder completes as a folder.
+                is_dir = entry.is_dir()
+                if not is_dir and not entry.name.endswith((".ml", ".hl")):
+                    continue
+                items.append(Completion(label=entry.name, kind="folder" if is_dir else "file",
+                                        sort_text=" " + entry.name,
+                                        commit_characters=["/"] if is_dir else None,
+                                        edit_range=edit_range))
+        return items
 
     def missing_loads(self, file_path: str) -> dict[str, list[MissingLoad]]:
         """For the file and every file it sees, the loads in it that cannot be

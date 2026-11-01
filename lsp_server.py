@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Language server for HOL Light (hol-language-server).
 
-Static lookup over `.ml` and `.hl` files: hover statements, go to
-definition, and document and workspace symbols. It parses files and the
-files they load, plus the core HOL Light sources. It evaluates nothing.
+Static lookup over `.ml` and `.hl` files: completion, hover statements,
+go to definition, and document and workspace symbols. It parses files and
+the files they load, plus the core HOL Light sources. It evaluates nothing.
 """
 
 import logging
@@ -14,12 +14,15 @@ from pygls.lsp.server import LanguageServer
 from pygls.uris import from_fs_path, to_fs_path
 
 from hol_language_server_core.config import Settings, expand_root_paths, parse_settings, settings_from_options
-from hol_language_server_core.service import HolLanguageService, SymbolInfo
+from hol_language_server_core.service import Completion, HolLanguageService, SymbolInfo
 from hol_language_server_core.text import Position as CorePosition, Range as CoreRange, TextDoc
 
 logger = logging.getLogger(__name__)
 
 MAX_WORKSPACE_SYMBOLS = 1000
+# A one-letter prefix over HOL Light matches thousands of names. The client
+# re-queries an incomplete list as the prefix grows.
+MAX_COMPLETION_ITEMS = 200
 
 _SYMBOL_KINDS = {
     "theorem": lsp.SymbolKind.Constant,
@@ -27,6 +30,17 @@ _SYMBOL_KINDS = {
     "term": lsp.SymbolKind.Constant,
     "value": lsp.SymbolKind.Variable,
     "module": lsp.SymbolKind.Module,
+}
+
+_COMPLETION_KINDS = {
+    "theorem": lsp.CompletionItemKind.Constant,
+    "definition": lsp.CompletionItemKind.Function,
+    "term": lsp.CompletionItemKind.Constant,
+    "constant": lsp.CompletionItemKind.Constant,
+    "value": lsp.CompletionItemKind.Variable,
+    "module": lsp.CompletionItemKind.Module,
+    "file": lsp.CompletionItemKind.File,
+    "folder": lsp.CompletionItemKind.Folder,
 }
 
 
@@ -48,15 +62,61 @@ def _warn(ls: LanguageServer, message: str) -> None:
     ls.window_show_message(lsp.ShowMessageParams(type=lsp.MessageType.Warning, message=message))
 
 
-def _to_lsp_position(pos: CorePosition) -> lsp.Position:
-    return lsp.Position(line=pos.line, character=pos.character)
+def _utf16_units(line: str, scalar: int) -> int:
+    """UTF-16 code units in the first `scalar` characters of the line."""
+    scalar = min(max(scalar, 0), len(line))
+    return sum(2 if ord(char) > 0xFFFF else 1 for char in line[:scalar])
 
 
-def _to_lsp_range(span: CoreRange) -> lsp.Range:
-    return lsp.Range(start=_to_lsp_position(span.start), end=_to_lsp_position(span.end))
+def _scalar_from_utf16(line: str, units: int) -> int:
+    """Code points in the first `units` UTF-16 code units of the line."""
+    points = 0
+    for char in line:
+        units -= 2 if ord(char) > 0xFFFF else 1
+        if units < 0:
+            break
+        points += 1
+    return points
 
 
-def _to_symbol_info(symbol: SymbolInfo) -> lsp.SymbolInformation:
+# Conversions take the file's lines outside the Basic Multilingual Plane
+# (`astral_lines`); on every other line the two column counts agree.
+def _core_position(astral: dict[int, str], pos: lsp.Position) -> CorePosition:
+    """The request position in code points, the core's coordinates."""
+    line = astral.get(pos.line)
+    return CorePosition(pos.line, pos.character if line is None else _scalar_from_utf16(line, pos.character))
+
+
+def _to_lsp_position(pos: CorePosition, astral: dict[int, str]) -> lsp.Position:
+    line = astral.get(pos.line)
+    return lsp.Position(line=pos.line, character=pos.character if line is None else _utf16_units(line, pos.character))
+
+
+def _to_lsp_range(span: CoreRange, astral: dict[int, str]) -> lsp.Range:
+    return lsp.Range(start=_to_lsp_position(span.start, astral), end=_to_lsp_position(span.end, astral))
+
+
+def _to_completion_item(item: Completion, astral: dict[int, str]) -> lsp.CompletionItem:
+    return lsp.CompletionItem(
+        label=item.label,
+        kind=_COMPLETION_KINDS[item.kind],
+        documentation=lsp.MarkupContent(kind=lsp.MarkupKind.Markdown, value=item.documentation)
+        if item.documentation is not None else None,
+        sort_text=item.sort_text,
+        commit_characters=item.commit_characters,
+        text_edit=lsp.TextEdit(range=_to_lsp_range(item.edit_range, astral), new_text=item.label)
+        if item.edit_range is not None else None,
+    )
+
+
+def _to_completion_list(items: list[Completion], astral: dict[int, str]) -> lsp.CompletionList:
+    return lsp.CompletionList(
+        is_incomplete=len(items) > MAX_COMPLETION_ITEMS,
+        items=[_to_completion_item(item, astral) for item in items[:MAX_COMPLETION_ITEMS]],
+    )
+
+
+def _to_symbol_info(symbol: SymbolInfo, astral: dict[int, str]) -> lsp.SymbolInformation:
     end = symbol.end_position
     if end is None:
         end = symbol.position.translate(0, len(symbol.name))
@@ -65,7 +125,7 @@ def _to_symbol_info(symbol: SymbolInfo) -> lsp.SymbolInformation:
         kind=_SYMBOL_KINDS[symbol.kind],
         location=lsp.Location(
             uri=_uri(symbol.path),
-            range=_to_lsp_range(CoreRange(symbol.position, end)),
+            range=_to_lsp_range(CoreRange(symbol.position, end), astral),
         ),
         container_name=symbol.container,
     )
@@ -89,11 +149,12 @@ def create_server(service: HolLanguageService, settings: Settings,
         for path, missing in service.missing_loads(file_path).items():
             if not missing and path not in published:
                 continue
+            astral = service.astral_lines(path)
             ls.text_document_publish_diagnostics(lsp.PublishDiagnosticsParams(
                 uri=_uri(path),
                 diagnostics=[
                     lsp.Diagnostic(
-                        range=_to_lsp_range(load.range),
+                        range=_to_lsp_range(load.range, astral),
                         message=f"File not found: {load.name}",
                         severity=lsp.DiagnosticSeverity.Warning,
                         source="hol-language-server",
@@ -165,40 +226,49 @@ def create_server(service: HolLanguageService, settings: Settings,
     @server.feature(lsp.TEXT_DOCUMENT_HOVER)
     def on_hover(ls: LanguageServer, params: lsp.HoverParams) -> lsp.Hover | None:
         doc = prepare(ls, params.text_document.uri)
-        pos = CorePosition(line=params.position.line, character=params.position.character)
+        pos = _core_position(doc.astral_lines, params.position)
         found = service.hover(doc, pos)
         if found is None:
             return None
         markdown, word_range = found
         return lsp.Hover(
             contents=lsp.MarkupContent(kind=lsp.MarkupKind.Markdown, value=markdown),
-            range=_to_lsp_range(word_range) if word_range is not None else None,
+            range=_to_lsp_range(word_range, doc.astral_lines) if word_range is not None else None,
         )
 
     @server.feature(lsp.TEXT_DOCUMENT_DEFINITION)
     def on_definition(ls: LanguageServer, params: lsp.DefinitionParams) -> list[lsp.Location]:
         doc = prepare(ls, params.text_document.uri)
-        pos = CorePosition(line=params.position.line, character=params.position.character)
+        pos = _core_position(doc.astral_lines, params.position)
         return [
             lsp.Location(
-                uri=_uri(target.path), range=_to_lsp_range(target.range)
+                uri=_uri(target.path),
+                range=_to_lsp_range(target.range, service.astral_lines(target.path)),
             )
             for target in service.definition(doc, pos)
         ]
+
+    @server.feature(lsp.TEXT_DOCUMENT_COMPLETION, lsp.CompletionOptions(trigger_characters=["/", '"']))
+    def on_completion(ls: LanguageServer, params: lsp.CompletionParams) -> lsp.CompletionList:
+        doc = prepare(ls, params.text_document.uri)
+        pos = _core_position(doc.astral_lines, params.position)
+        return _to_completion_list(service.completion(doc, pos), doc.astral_lines)
 
     @server.feature(lsp.TEXT_DOCUMENT_DOCUMENT_SYMBOL)
     def on_document_symbol(ls: LanguageServer,
                            params: lsp.DocumentSymbolParams) -> list[lsp.SymbolInformation]:
         file_path = _fs_path(params.text_document.uri)
         index(ls, file_path, False)
-        return [_to_symbol_info(s) for s in service.document_symbols(file_path)]
+        astral = service.astral_lines(file_path)
+        return [_to_symbol_info(s, astral) for s in service.document_symbols(file_path)]
 
     @server.feature(lsp.WORKSPACE_SYMBOL)
     def on_workspace_symbol(ls: LanguageServer,
                             params: lsp.WorkspaceSymbolParams) -> list[lsp.SymbolInformation]:
         query = params.query.lower()
         symbols = service.search_symbols(lambda name: query in name.lower())
-        return [_to_symbol_info(s) for s in symbols[:MAX_WORKSPACE_SYMBOLS]]
+        # Indexed files only: no file is read.
+        return [_to_symbol_info(s, service.astral_lines(s.path)) for s in symbols[:MAX_WORKSPACE_SYMBOLS]]
 
     return server
 
