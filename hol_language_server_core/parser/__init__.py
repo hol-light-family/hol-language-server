@@ -1,6 +1,6 @@
 """OCaml-subset parser for HOL Light sources.
 
-Finds `needs`/`loads`/`loadt` dependencies, `prove`-style theorems,
+Finds `needs`/`loads`/`loadt` dependencies, simple `load_path` updates, `prove`-style theorems,
 `new_definition`-style constant definitions and the HOL constants their terms
 introduce, other `let` bindings, and `module`/`open`/`include` structure.
 Everything else is skipped.

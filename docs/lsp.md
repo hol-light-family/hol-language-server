@@ -13,6 +13,7 @@ The language server `hol-language-server` gives an editor lookups over HOL Light
   - It does not show the HOL Light `Help/` pages.
 - Go to Definition: jumps to where a name is defined.
   - Works for definitions and modules.
+  - A module a loaded file opens stays open for the files loaded after it, in load order.
   - Works for local names: a `let ... in` name, a function parameter, or a variable of a `match`, `function` or `try` arm. It jumps to the binding in scope, not to a top-level definition with the same name.
     - Scope is found by a heuristic over brackets, `let ... in`, and arms, not the full OCaml grammar.
     - Patterns longer than 40 tokens are not read, so their names are not found as local.
@@ -36,8 +37,8 @@ The language server `hol-language-server` gives an editor lookups over HOL Light
   - After a dot: the definitions and modules of the named module that start
     with the rest (`Utils.Pa` suggests `Pair`).
   - Inside `needs "..."` (also `loads`, `loadt`, and custom imports): the
-    `.ml` and `.hl` files and folders under the root paths that start with
-    what is typed, or under the HOL Light directory for `loads`.
+    `.ml` and `.hl` files and folders under the root paths and the load path
+    that start with what is typed, or under the HOL Light directory for `loads`.
     Typing `"` or `/` opens the list.
   - A name being defined: nothing. After `let`, `and`, `fun`, `module`, or
     `module type`, while only names follow it, in tuples or lists if any
@@ -76,7 +77,7 @@ Directories from `--load-path` or the `HOLLIGHT_LOAD_PATH` environment variable 
 - An editor can also send settings when it starts the server (the LSP `initializationOptions`). These win over the flags.
   - They may be wrapped as `{"hol-light": {...}}` or sent bare.
   - `path` (text): the HOL Light directory.
-  - `rootPaths` (list of text): where `needs` paths are searched.
+  - `rootPaths` (list of text): where `needs` paths are searched. The load path has no setting here: use the flag or the environment variable.
   - `autoIndex` (true/false): read each file as it is opened or edited. Default true.
   - `indexWorkspace` (true/false): read every `.ml`/`.hl` file of the workspace at startup. Default true.
   - `customImports`, `customTheorems`, `customDefinitions` (lists of text): your project's own command names, the same as the `--custom-*` flags.
@@ -92,6 +93,7 @@ Directories from `--load-path` or the `HOLLIGHT_LOAD_PATH` environment variable 
 - The server log (stderr, which the editor keeps).
   - Statements the parser could not read.
   - Files that are not valid UTF-8. They are still read, with the bad bytes replaced.
+  - Directories and files of the workspace that cannot be read. They are skipped.
 
 ## Not provided
 

@@ -24,7 +24,7 @@ jobs:
         run: uv sync --locked
 
       - name: Run tests
-        run: uv run pytest -v
+        run: uv run python -m pytest -v
 
       - name: Type check
         run: uv run basedpyright

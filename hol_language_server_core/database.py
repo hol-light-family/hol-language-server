@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 from hol_language_server_core import util
@@ -356,8 +356,42 @@ class Database:
             ]
         return set(modules)
 
+    def _load_order(self, file_path: str, deps: set[str]) -> list[str]:
+        """The deps in the order they load: the core HOL Light files, by name
+        since they keep no loads, then each file after the files it loads,
+        from the outermost files loading this one."""
+        order: list[str] = []
+        seen: set[str] = set()
+
+        def loads(file: str) -> Iterator[Dependency]:
+            index = self._file_index.get(file)
+            return iter(index.dependencies if index is not None else [])
+
+        def visit(root: str) -> None:
+            if root in seen or root not in deps:
+                return
+            seen.add(root)
+            # Not recursive: chains of loads can be long.
+            stack = [(root, loads(root))]
+            while stack:
+                file, rest = stack[-1]
+                for dep in rest:
+                    if dep.path is not None and dep.path in deps and dep.path not in seen:
+                        seen.add(dep.path)
+                        stack.append((dep.path, loads(dep.path)))
+                        break
+                else:
+                    order.append(file)
+                    stack.pop()
+
+        outermost = sorted(file for file in self.load_context(file_path) if not self._loaders_of(file))
+        for root in [*sorted(self._base_hol_light_files), *outermost, file_path, *sorted(deps)]:
+            visit(root)
+        return order
+
     def _dependency_open_modules(self, file_path: str, deps: set[str]) -> set[Module]:
-        """Top-level opened/included modules of the file's dependencies.
+        """Top-level opened/included modules of the file's dependencies, in
+        load order, since an open may name a module an earlier one reveals.
 
         In the OCaml toplevel they stay open for files loaded later: e.g.,
         HOL Light's fusion.ml defines the kernel in `module Hol` and then
@@ -366,7 +400,7 @@ class Database:
         result = self._open_modules_cache.get(file_path)
         if result is None:
             result = set()
-            for dep in deps:
+            for dep in self._load_order(file_path, deps):
                 file = None if dep == file_path else self._file_index.get(dep)
                 decls: list[OpenDecl] = []
                 if file is not None:
