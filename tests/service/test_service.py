@@ -3,6 +3,7 @@ hover, go to definition, and document and workspace symbols."""
 
 import os
 
+import pytest
 from hol_server_paths import EXAMPLES, PROJECT, example_service, tactics_doc
 from lookups import check_lookup_comments
 from hol_language_server_core.service import HolLanguageService
@@ -128,6 +129,34 @@ def test_a_bound_variable_named_like_a_constant_goes_nowhere():
     path = os.path.join(PROJECT, "bound.ml")
     service.index(path, True)
     check_lookup_comments(service, service.get_document(path), EXAMPLES)
+
+
+def test_comments_and_strings_are_not_lookups():
+    service = example_service()
+    path = os.path.join(PROJECT, "no_lookups.ml")
+    service.index(path, True)
+    check_lookup_comments(service, service.get_document(path), EXAMPLES)
+
+
+@pytest.mark.parametrize("text", ["(* lookup_target", '"lookup_target', "(* outer (* inner *) lookup_target",
+                                  "{|lookup_target", "{id|x |} lookup_target"])
+def test_text_the_file_ends_inside_is_not_a_lookup(text: str):
+    service = example_service()
+    path = os.path.join(PROJECT, "no_lookups.ml")
+    with open(path, encoding="utf-8") as handle:
+        doc = service.open_document(path, handle.read() + "\nlet z = " + text)
+    service.index(path, True)
+    position = Position(doc.line_count - 1, len("let z = " + text))
+    assert service.hover(doc, position) is None
+    assert service.definition(doc, position) == []
+
+
+def test_lookups_out_of_range_find_nothing():
+    service = example_service()
+    doc = tactics_doc(service)
+    for line in (-1, doc.line_count):
+        assert service.hover(doc, Position(line, 0)) is None
+        assert service.definition(doc, Position(line, 0)) == []
 
 
 def test_a_comment_definition_is_not_a_definition():
