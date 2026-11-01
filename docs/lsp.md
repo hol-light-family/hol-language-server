@@ -27,7 +27,8 @@ The language server `hol-language-server` gives an editor lookups over HOL Light
   - On `needs "..."`, it opens the file named.
 - Completion: suggests what continues the word or path under the cursor.
   At most 200 items; a longer list is marked incomplete, so the editor asks
-  again as more is typed.
+  again as more is typed. A change on disk to a file already loaded shows
+  up at the next hover or Go to Definition, not at completion.
   - A name: definitions and modules in the files read whose name starts with
     what is typed. A member of a module that is not open is suggested with
     its module name (`Kernel.kfun2`). At the start of a word nothing is
@@ -39,13 +40,14 @@ The language server `hol-language-server` gives an editor lookups over HOL Light
     what is typed, or under the HOL Light directory for `loads`.
     Typing `"` or `/` opens the list.
   - A name being defined: nothing. After `let`, `and`, `fun`, `module`, or
-    `module type`, while only names follow it, the word declares a name
-    instead of using one. A keyword in between ends that, so the name in
-    `let open M in name` completes.
+    `module type`, while only names follow it, in tuples or lists if any
+    (`let (a, name`), the word declares a name instead of using one. A
+    keyword in between ends that, so the name in `let open M in name`
+    completes.
   - Inside a term: the HOL constants starting with the name, also while
-    the closing backquote is still missing. A variable the term binds
-    completes to nothing, and an `^` antiquotation completes OCaml names
-    instead.
+    the closing backquote is still missing. A variable the term binds, or
+    one being named before the binder's dot (`!name`), completes to nothing,
+    and an `^` antiquotation completes OCaml names instead.
   - In a comment, a string, or on an operator: nothing. Only an uncommented
     import string completes, to file names.
 - Symbols.

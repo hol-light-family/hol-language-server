@@ -350,6 +350,32 @@ def test_completion_is_empty_in_an_unclosed_comment_string_or_term_import():
         assert service.completion(changed, position) == []
 
 
+@pytest.mark.parametrize(("term", "labels"), [
+    ("`!fi", []),
+    ("`?fi", []),
+    ("`?!fi", []),
+    ("`\\fi", []),
+    ("`@fi", []),
+    ("`!x fi", []),
+    ("`!x:num fi", []),
+    ("`!x. !fi", []),
+    # After the dot, and after the connectives holding a backslash, names are uses.
+    ("`!x. fi", ["fibonacci", "fib", "fib3"]),
+    ("`x /\\ fi", ["fibonacci", "fib", "fib3"]),
+    ("`x \\/ fi", ["fibonacci", "fib", "fib3"]),
+])
+def test_a_variable_being_named_completes_to_nothing(term: str, labels: list[str]):
+    service = example_service()
+    path = os.path.join(PROJECT, "constants.ml")
+    service.index(path, True)
+    doc = service.get_document(path)
+    # Unclosed, so the term runs to the end of the text.
+    changed = service.open_document(path, doc.text + "\nlet t = " + term)
+    service.index(path, True)
+    position = Position(changed.line_count - 1, len("let t = " + term))
+    assert [item.label for item in service.completion(changed, position)] == labels
+
+
 # ================ Symbols: document order, predicate search. =================
 def test_document_symbols_are_position_ordered():
     service = example_service()

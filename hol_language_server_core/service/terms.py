@@ -8,7 +8,10 @@ from hol_language_server_core.parser import HOL_TOKEN_RE
 # A binder and the names before its dot: `!x y.`, `?x.`, `?!x.`, `\x.`,
 # `@x.`. Not the `\` of `/\` or `\/`. The names may carry types, which may
 # hold spaces (`x:24 word`), `->`, `^` and commas.
-_BINDER_RE = re.compile(r"(?<![/\\])(?:\?!|[!?\\@])(?!/)([\w'\s():^\->,]*?)\.")
+_BINDER_HEAD = r"(?<![/\\])(?:\?!|[!?\\@])(?!/)"
+_BINDER_NAMES = r"[\w'\s():^\->,]*"
+_BINDER_RE = re.compile(_BINDER_HEAD + "(" + _BINDER_NAMES + r"?)\.")
+_OPEN_BINDER_RE = re.compile(_BINDER_HEAD + _BINDER_NAMES + "$")
 
 
 def _binder_names(group: str) -> list[str]:
@@ -61,6 +64,12 @@ def bound_in_term(text: str, start: int, offset: int, word: str) -> bool:
         if offset < m.end() or _in_scope(text, m.end(), offset):
             return True
     return False
+
+
+def in_open_binder(text: str, start: int, offset: int) -> bool:
+    """Whether the offset, in the term opening at start, follows a binder
+    whose dot is not written yet, so a word there names a variable."""
+    return _OPEN_BINDER_RE.search(text, start + 1, offset) is not None
 
 
 def hol_word_at(line: str, character: int) -> tuple[int, int] | None:

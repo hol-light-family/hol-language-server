@@ -63,20 +63,29 @@ def _parse_complete(raw: str) -> list[_CompletionExpectation]:
     return items
 
 
+def complete_probes(text: str) -> list[tuple[int, list[tuple[str, str]]]]:
+    """The cursor offset and expected (label, kind) items of each complete comment."""
+    probes: list[tuple[int, list[tuple[str, str]]]] = []
+    for match in _DIRECTIVE_RE.finditer(text):
+        if match.group(1) != "complete":
+            continue
+        use = _parse_use(match.group(2))
+        offset = text.index(use.snippet) + len(use.snippet) + use.skip
+        assert offset < match.start(), f"{use.snippet!r} first occurs inside or after its comment"
+        probes.append((offset, [(item.label, item.kind) for item in _parse_complete(match.group(3))]))
+    return probes
+
+
 def check_lookup_comments(service: HolLanguageService, doc: TextDoc, examples: str) -> None:
     """Every goto, hover, and complete comment in the document holds for the service."""
+    for offset, expected in complete_probes(doc.text):
+        found = service.completion(doc, doc.position_at(offset))
+        assert [(item.label, item.kind) for item in found] == expected
     for match in _DIRECTIVE_RE.finditer(doc.text):
         kind, use_raw, payload_raw = match.group(1), match.group(2), match.group(3)
-        use = _parse_use(use_raw)
         if kind == "complete":
-            offset = doc.text.index(use.snippet) + len(use.snippet) + use.skip
-            assert offset < match.start(), f"{use.snippet!r} first occurs inside or after its comment"
-            expected = _parse_complete(payload_raw)
-            found = service.completion(doc, doc.position_at(offset))
-            assert [(item.label, item.kind) for item in found] == [
-                (item.label, item.kind) for item in expected
-            ]
             continue
+        use = _parse_use(use_raw)
         offset = doc.text.index(use.snippet) + use.skip
         assert offset < match.start(), f"{use.snippet!r} first occurs inside or after its comment"
         position = doc.position_at(offset)

@@ -10,12 +10,26 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from hol_language_server_core.text import TextDoc
 from hol_server_paths import PROJECT
+from lookups import complete_probes
 
 SERVER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lsp_server.py")
 TACTICS = os.path.join(PROJECT, "tactics.ml")
-CONSTANTS = os.path.join(PROJECT, "constants.ml")
+
+# The LSP numbers of the kinds `complete` comments name.
+_COMPLETION_KIND_NUMBERS = {
+    "definition": 3,
+    "value": 6,
+    "module": 9,
+    "file": 17,
+    "folder": 19,
+    "theorem": 21,
+    "term": 21,
+    "constant": 21,
+}
 
 
 def uri(path: str) -> str:
@@ -160,6 +174,20 @@ def check_lsp_lookup_comments(client: LspClient, path: str, text: str) -> None:
             assert hover["contents"]["value"] == payload_raw.strip()
 
 
+def check_lsp_complete_comments(client: LspClient, path: str, text: str) -> None:
+    """Every complete comment in the file holds over LSP. The file must already be open."""
+    doc = TextDoc(path, text)
+    for offset, expected in complete_probes(text):
+        position = doc.position_at(offset)
+        items = client.request(
+            "textDocument/completion",
+            {"textDocument": {"uri": uri(path)},
+             "position": {"line": position.line, "character": position.character}},
+        )["items"]
+        assert [(item["label"], item["kind"]) for item in items] == [
+            (label, _COMPLETION_KIND_NUMBERS[kind]) for label, kind in expected]
+
+
 _DIAGNOSTIC_RE = re.compile(r"\(\* diagnostic: (.*?) =>\s+(.*?)\s+\*\)")
 
 
@@ -230,95 +258,102 @@ def test_hover_definition_and_symbols():
         client.notify("textDocument/didClose", {"textDocument": {"uri": uri(TACTICS)}})
 
 
-def test_completion_suggests_names_members_and_files():
+@pytest.mark.parametrize(
+    "name", ["completion.ml", "completion_files.ml", "completion_unclosed_term.ml", "constants.ml"])
+def test_completion_offers_what_the_complete_comments_say(name: str):
     from hol_server_paths import HOL
 
+    path = os.path.join(PROJECT, name)
     with start_server(HOL) as (client, _):
-        with open(TACTICS, encoding="utf-8") as handle:
+        with open(path, encoding="utf-8") as handle:
             text = handle.read()
         client.notify(
             "textDocument/didOpen",
-            {"textDocument": {"uri": uri(TACTICS), "languageId": "ocaml", "version": 1, "text": text}},
+            {"textDocument": {"uri": uri(path), "languageId": "ocaml", "version": 1, "text": text}},
         )
-        [found] = client.request(
-            "textDocument/completion",
-            {"textDocument": {"uri": uri(TACTICS)}, "position": {"line": 17, "character": 22}},
-        )["items"]
-        assert found == {"label": "HELPER_TAC", "kind": 6, "textEdit": {
-            "range": {"start": {"line": 17, "character": 12}, "end": {"line": 17, "character": 22}},
-            "newText": "HELPER_TAC"}}
-        # At the name being defined, nothing completes.
-        assert (
-            client.request(
-                "textDocument/completion",
-                {"textDocument": {"uri": uri(TACTICS)}, "position": {"line": 11, "character": 14}},
-            )["items"]
-            == []
-        )
-        # In a comment, nothing completes either.
-        assert (
-            client.request(
-                "textDocument/completion",
-                {"textDocument": {"uri": uri(TACTICS)}, "position": {"line": 4, "character": 14}},
-            )["items"]
-            == []
-        )
-
-        changed = text + "let z = Kernel.kfun"
-        client.notify(
-            "textDocument/didChange",
-            {"textDocument": {"uri": uri(TACTICS), "version": 2},
-             "contentChanges": [{"text": changed}]},
-        )
-        members = client.request(
-            "textDocument/completion",
-            {"textDocument": {"uri": uri(TACTICS)},
-             "position": {"line": text.count("\n"), "character": len("let z = Kernel.kfun")}},
-        )["items"]
-        assert [item["label"] for item in members] == ["kfun", "kfun2"]
-        for item in members:
-            edit = item["textEdit"]
-            assert (edit["range"]["start"]["character"], edit["range"]["end"]["character"]) == (15, 19)
-            assert edit["newText"] == item["label"]
-
-        client.notify(
-            "textDocument/didChange",
-            {"textDocument": {"uri": uri(TACTICS), "version": 3},
-             "contentChanges": [{"text": 'needs "lib/u'}]},
-        )
-        files = client.request(
-            "textDocument/completion",
-            {"textDocument": {"uri": uri(TACTICS)},
-             "position": {"line": 0, "character": len('needs "lib/u')}},
-        )["items"]
-        assert {item["label"] for item in files} == {"util.ml"}
-        assert files[0]["kind"] == 17
-        assert files[0]["sortText"] == " util.ml"
-        client.notify("textDocument/didClose", {"textDocument": {"uri": uri(TACTICS)}})
+        check_lsp_complete_comments(client, path, text)
+        client.notify("textDocument/didClose", {"textDocument": {"uri": uri(path)}})
 
 
-def test_term_completion_suggests_constants():
+@pytest.mark.parametrize(("name", "snippet", "start", "item"), [
+    ("completion.ml", "let z = Kernel.kfun", 15, {"label": "kfun", "kind": 6}),
+    ("completion_files.ml", 'needs "lib/util.ml', 11, {"label": "util.ml", "kind": 17, "sortText": " util.ml"}),
+])
+def test_completion_items_carry_their_edit(name: str, snippet: str, start: int, item: dict[str, Any]):
     from hol_server_paths import HOL
 
+    path = os.path.join(PROJECT, name)
     with start_server(HOL) as (client, _):
-        with open(CONSTANTS, encoding="utf-8") as handle:
+        with open(path, encoding="utf-8") as handle:
             text = handle.read()
         client.notify(
             "textDocument/didOpen",
-            {"textDocument": {"uri": uri(CONSTANTS), "languageId": "ocaml", "version": 1, "text": text}},
+            {"textDocument": {"uri": uri(path), "languageId": "ocaml", "version": 1, "text": text}},
         )
-        members = client.request(
+        position = TextDoc(path, text).position_at(text.index(snippet) + len(snippet))
+        found = client.request(
             "textDocument/completion",
-            {"textDocument": {"uri": uri(CONSTANTS)},
-             "position": {"line": 46, "character": 55}},
-        )["items"]
-        assert [(item["label"], item["kind"]) for item in members] == [
-            ("fibonacci", 21), ("fib", 21), ("fib3", 21)]
-        for item in members:
-            edit = item["textEdit"]
-            assert (edit["range"]["start"]["character"], edit["range"]["end"]["character"]) == (52, 55)
-            assert edit["newText"] == item["label"]
-        client.notify("textDocument/didClose", {"textDocument": {"uri": uri(CONSTANTS)}})
+            {"textDocument": {"uri": uri(path)},
+             "position": {"line": position.line, "character": position.character}},
+        )["items"][0]
+        assert found == {**item, "textEdit": {
+            "range": {"start": {"line": position.line, "character": start},
+                      "end": {"line": position.line, "character": position.character}},
+            "newText": item["label"]}}
+        client.notify("textDocument/didClose", {"textDocument": {"uri": uri(path)}})
+
+
+def test_completion_leaves_loaded_files_to_the_other_requests(tmp_path: Path):
+    from hol_server_paths import HOL
+
+    loaded = tmp_path / "loaded.ml"
+    loaded.write_text("let zz_one = 1;;\n", encoding="utf-8")
+    path = str(tmp_path / "t.ml")
+    text = 'needs "loaded.ml";;\nlet y = zz_'
+    params = {"textDocument": {"uri": uri(path)}, "position": {"line": 1, "character": 11}}
+    with start_server(HOL) as (client, _):
+        client.notify(
+            "textDocument/didOpen",
+            {"textDocument": {"uri": uri(path), "languageId": "ocaml", "version": 1, "text": text}},
+        )
+
+        def labels() -> list[str]:
+            return [item["label"] for item in client.request("textDocument/completion", params)["items"]]
+
+        assert labels() == ["zz_one"]
+        loaded.write_text("let zz_one = 1;;\nlet zz_two = 2;;\n", encoding="utf-8")
+        stat = loaded.stat()
+        os.utime(loaded, (stat.st_atime, stat.st_mtime + 10))
+        # Completion does not look at the loaded file again; hover does.
+        assert labels() == ["zz_one"]
+        client.request("textDocument/hover", params)
+        assert labels() == ["zz_one", "zz_two"]
+        client.notify("textDocument/didClose", {"textDocument": {"uri": uri(path)}})
+
+
+def test_a_deleted_load_of_a_loaded_file_is_shown(tmp_path: Path):
+    from hol_server_paths import HOL
+
+    (tmp_path / "middle.ml").write_text('needs "last.ml";;\n', encoding="utf-8")
+    last = tmp_path / "last.ml"
+    last.write_text("let zz_last = 1;;\n", encoding="utf-8")
+    path = str(tmp_path / "t.ml")
+    text = 'needs "middle.ml";;\nlet y = zz_'
+    params = {"textDocument": {"uri": uri(path)}, "position": {"line": 1, "character": 11}}
+    with start_server(HOL) as (client, _):
+        client.notify(
+            "textDocument/didOpen",
+            {"textDocument": {"uri": uri(path), "languageId": "ocaml", "version": 1, "text": text}},
+        )
+        last.unlink()
+        # Hover and go to definition walk the loads: neither may fail on the gone file.
+        client.request("textDocument/hover", params)
+        [missing] = client.diagnostics(str(tmp_path / "middle.ml")) or []
+        assert missing["message"] == "File not found: last.ml"
+        last.write_text("let zz_last = 1;;\n", encoding="utf-8")
+        client.request("textDocument/hover", params)
+        assert client.diagnostics(str(tmp_path / "middle.ml")) == []
+        client.notify("textDocument/didClose", {"textDocument": {"uri": uri(path)}})
 
 
 def test_definitions_in_comments_are_not_published():

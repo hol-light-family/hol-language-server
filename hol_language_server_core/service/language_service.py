@@ -13,17 +13,18 @@ from hol_language_server_core.parser import (OCAML_KEYWORDS, DEFINITION_TYPE_NAM
 from hol_language_server_core.service.results import (Completion, DefinitionTarget, MissingLoad, Reference,
                                                       SourceInfo, SymbolInfo, definition_symbol, module_symbol)
 from hol_language_server_core.service.scope import bound_names, local_binding
-from hol_language_server_core.service.terms import bound_in_term, hol_word_at
+from hol_language_server_core.service.terms import bound_in_term, hol_word_at, in_open_binder
 from hol_language_server_core.service.tokens import REFERENCE_RE, enclosing_token, is_name_start
 from hol_language_server_core.text import Position, Range, TextDoc, location
 
 # `let`, `let rec`, `and`, `fun`, `module`, or `module type`, then names
-# only up to the word being typed: the position declares a name. A finished
-# keyword ends the run, so `let open M in x` uses x.
+# only up to the word being typed, in tuples or lists if any: the position
+# declares a name. A finished keyword ends the run, so `let open M in x` uses x.
 _NOT_KEYWORD = r"(?!(?:" + "|".join(sorted(OCAML_KEYWORDS)) + r")(?![\w']))"
+_PATTERN_GAP = r"[\s()\[\],;]+"
 _BINDER_SITE_RE = re.compile(
-    r"\b(?:let\s+(?:rec\s+)?|and\s+|fun\s+|module\s+(?:type\s+)?)"
-    r"(?:" + _NOT_KEYWORD + r"[A-Za-z0-9_']+\s+)*[A-Za-z0-9_']*$"
+    r"\b(?:let(?:\s+rec)?|and|fun|module(?:\s+type)?)" + _PATTERN_GAP
+    + r"(?:" + _NOT_KEYWORD + r"[A-Za-z0-9_']+" + _PATTERN_GAP + r")*[A-Za-z0-9_']*$"
 )
 
 
@@ -290,8 +291,10 @@ class HolLanguageService:
         prefix = line[begin:position.character]
         if not prefix:
             return []
-        # A variable the term binds hides the constants.
-        if bound_in_term(doc.text, term, offset - position.character + begin, line[begin:end]):
+        # A variable the term binds hides the constants, and so does one
+        # being named, before the binder's dot.
+        word_start = offset - position.character + begin
+        if bound_in_term(doc.text, term, word_start, line[begin:end]) or in_open_binder(doc.text, term, word_start):
             return []
         deps = self.database.all_dependencies(doc.path)
         found = self.database.filter_constants_by_name(lambda name: name.startswith(prefix), deps)

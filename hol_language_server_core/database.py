@@ -26,6 +26,10 @@ class Dependency:
         self.path = path
 
     @property
+    def parsed(self) -> ParsedDependency:
+        return self._dep
+
+    @property
     def is_resolved(self) -> bool:
         return self.path is not None
 
@@ -221,7 +225,22 @@ class Database:
                 )
             self._add_to_index(file_path, result, deps, mtime, astral_lines(text))
             return True, deps
-        return False, file.dependencies if file is not None else []
+        if file is None:
+            return False, []
+        if root_paths is not None:
+            self._refresh_dependencies(file_path, file, hol_path, root_paths)
+        return False, file.dependencies
+
+    def _refresh_dependencies(self, file_path: str, file: FileIndex, hol_path: str, root_paths: list[str]) -> None:
+        """Resolve again the loads of an unchanged file whose targets are not
+        there: one may have been deleted, or a missing one created."""
+        for dep in file.dependencies:
+            if dep.path is not None and util.file_exists(dep.path, False):
+                continue
+            path = _resolve_dependency_path(dep.parsed, hol_path, os.path.dirname(file_path), root_paths)
+            if path != dep.path:
+                dep.path = path
+                self._invalidate_caches()
 
     def _add_closure(self, file_path: str, visited: set[str]) -> None:
         if file_path in visited and file_path not in self._base_hol_light_files:
