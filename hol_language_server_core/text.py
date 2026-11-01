@@ -16,6 +16,11 @@ CHAR_LITERAL = (
     r"(?<![\w'])'(?:\\(?:[\\'\"ntbr ]|\d{3}|x[0-9a-fA-F]{2}|o[0-7]{3})|[^\\'\n])'"
 )
 
+# The opening of an OCaml quoted string, such as `{|` or `{id|`.
+QUOTED_STRING_OPEN = r"\{[a-z_]*\|"
+# A whole one, up to the end of the text if it is not closed. Nothing escapes in it.
+QUOTED_STRING = r"\{(?P<quote_id>[a-z_]*)\|[\s\S]*?(?:(?P<quote_close>\|(?P=quote_id)\})|\Z)"
+
 
 @dataclass(frozen=True)
 class Position:

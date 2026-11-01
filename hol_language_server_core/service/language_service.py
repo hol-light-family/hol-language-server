@@ -191,8 +191,11 @@ class HolLanguageService:
 
     def hover(self, doc: TextDoc, position: Position) -> tuple[str, Range | None] | None:
         """The statement of the definition at the position, else None.
-        None for local names: they have no statement. Inside a term, the
-        statement of the definition of the HOL constant."""
+        None for local names, which have no statement, and in a comment or
+        string. Inside a term, the statement of the definition of the HOL constant."""
+        region = self._enclosing_token(doc, doc.offset_at(position))
+        if region is not None and region.type in (TokenType.comment, TokenType.string):
+            return None
         constants = self.term_constants(doc, position)
         if constants is not None:
             found, word_range = constants
@@ -215,8 +218,11 @@ class HolLanguageService:
     def definition(self, doc: TextDoc, position: Position) -> list[DefinitionTarget]:
         """Go to Definition: the file named by a `needs` string; inside a term,
         the HOL constants the name names; else the definitions and modules
-        the word at the position names."""
+        the word at the position names. Nothing else in a comment or string."""
         if position.line < 0 or position.line >= doc.line_count:
+            return []
+        region = self._enclosing_token(doc, doc.offset_at(position))
+        if region is not None and region.type == TokenType.comment:
             return []
         imports = ["needs", "loads", "loadt", *self._settings.custom_commands.imports]
         line = doc.line_at(position.line)
@@ -224,12 +230,16 @@ class HolLanguageService:
             text = m.group(0)
             first = m.start() + text.find('"')
             last = m.start() + text.rfind('"')
-            if first <= position.character <= last:
+            # The string the import opens: not text in a term, or in another string.
+            opens_region = region is None or region.start_pos == doc.offset_at(position.with_(character=first))
+            if first <= position.character <= last and opens_region:
                 dep = self.database.find_dependency(doc.path, m.group(1))
                 loc = dep.get_location() if dep is not None else None
                 if loc is None:
                     return []
                 return [DefinitionTarget(loc.path, loc.range)]
+        if region is not None and region.type == TokenType.string:
+            return []
         constants = self.term_constants(doc, position)
         if constants is not None:
             return [DefinitionTarget(loc.path, loc.range) for loc in (c.get_location() for c in constants[0])]

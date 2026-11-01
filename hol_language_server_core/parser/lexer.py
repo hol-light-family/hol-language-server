@@ -7,7 +7,7 @@ from bisect import bisect_right
 from dataclasses import dataclass
 from enum import IntEnum
 
-from hol_language_server_core.text import CHAR_LITERAL, Position
+from hol_language_server_core.text import CHAR_LITERAL, QUOTED_STRING, QUOTED_STRING_OPEN, Position
 
 
 def line_number(line_starts: list[int], pos: int) -> int:
@@ -53,6 +53,7 @@ class TokenType(IntEnum):
 _TOKEN_RE = re.compile(
     CHAR_LITERAL
     + r"|\(\*"
+    + r"|" + QUOTED_STRING_OPEN
     + r"|[" + '"' + r"`'()\],{}]"
     + r"|\[\|?|\|\]"
     + r"|[-+*/#><=!?~%&$^@:.|]+"
@@ -60,6 +61,8 @@ _TOKEN_RE = re.compile(
     + r"|[_a-zA-Z][\w'.]*"
     + r"|\d[\w'.]*"
 )
+
+_QUOTED_STRING_RE = re.compile(QUOTED_STRING)
 
 _OPERATOR_CHARS = set("-+*/#><=!?~%&$^@:.|")
 
@@ -154,6 +157,8 @@ class Lexer:
             return self._parse_comment(m.start())
         if tok == '"':
             return self._parse_string(m.start())
+        if tok[0] == "{" and tok != "{":
+            return self._parse_quoted_string(m.start())
         if tok == "`":
             return self._parse_term(m.start())
         self.pos = m.end()
@@ -200,6 +205,12 @@ class Lexer:
             p = m.end()
         self.pos = len(self.text)
         return Token(TokenType.string, pos, self.pos, closed=False)
+
+    def _parse_quoted_string(self, pos: int) -> Token:
+        m = _QUOTED_STRING_RE.match(self.text, pos)
+        assert m is not None, "called at the opening of a quoted string"
+        self.pos = m.end()
+        return Token(TokenType.string, pos, self.pos, closed=m.group("quote_close") is not None)
 
     def _parse_term(self, pos: int) -> Token:
         end = self.text.find("`", pos + 1)

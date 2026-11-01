@@ -180,6 +180,7 @@ def test_completion_is_empty_in_an_unclosed_comment_string_or_term_import():
     doc = service.get_document(path)
     # lib/util.ml exists, so the last two would list it were they imports.
     probes = ["(* Gadget widg", 'let s = "hello Gad', "(* outer (* x *) Gadget widg",
+              "let s = {|hello Gad", "let s = {id|x |} Gad", "needs {|lib/u",
               '(* needs "lib/u', 'let t = `needs "lib/u']
     for probe in probes:
         changed = service.open_document(path, doc.text + "\n" + probe)

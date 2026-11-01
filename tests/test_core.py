@@ -62,6 +62,16 @@ def test_parser_reads_load_path_updates_of_string_constants(statement: str, befo
     assert (dep.load_path.before, dep.load_path.after) == (before, after)
 
 
+@pytest.mark.parametrize(("text", "names"), [
+    ('let s = {|needs "ghost.ml";;|};;\nneeds "real.ml";;', ["real.ml"]),
+    ('needs {|quoted.ml|};;\nneeds "real.ml";;', ["real.ml"]),
+    # Not closed: the rest of the file is in it.
+    ('needs "real.ml";;\nlet s = {|\nneeds "ghost.ml";;', ["real.ml"]),
+])
+def test_quoted_strings_hold_no_loads(text: str, names: list[str]):
+    assert [dep.name for dep in parse_text(text, "/t.ml", CustomCommands()).dependencies] == names
+
+
 def test_load_path_updates_add_up_and_apply_to_later_loads():
     result = parse_text(
         'needs "x.ml";;\nload_path := "a" :: !load_path;;\nneeds "y.ml";;\n'
@@ -71,7 +81,7 @@ def test_load_path_updates_add_up_and_apply_to_later_loads():
         ((), ()), (("a",), ()), (("b", "a"), ("c",))]
 
 
-@pytest.mark.parametrize("name", ["definitions.ml", "modules.ml", "sources.ml"])
+@pytest.mark.parametrize("name", ["definitions.ml", "modules.ml", "sources.ml", "quoted_strings.ml"])
 def test_parser_finds_what_the_expect_comments_say(name: str):
     doc = read_doc(name)
     check_expectations(doc.text, parse_text(doc.text, doc.path, CustomCommands()))

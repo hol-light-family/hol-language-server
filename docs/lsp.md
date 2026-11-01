@@ -10,6 +10,7 @@ The language server `hol-language-server` gives an editor lookups over HOL Light
   - A module: its name.
   - A local name (see below): nothing.
   - Inside a term (between backquotes), a HOL constant: the statement of the definition that introduces it, also while the closing backquote is still missing. A variable: nothing.
+  - In a comment or a string: nothing. A string may span lines, or be a quoted string such as `{|...|}` or `{id|...|id}`.
   - It does not show the HOL Light `Help/` pages.
 - Go to Definition: jumps to where a name is defined.
   - Works for definitions and modules.
@@ -26,6 +27,7 @@ The language server `hol-language-server` gives an editor lookups over HOL Light
     - Not read: constructors of `define_type`, `new_specification`, and constants named through an overloaded interface: `inv` finds nothing, and `+` finds every definition written with `+`.
     - Terms in Unicode syntax are not read.
   - On `needs "..."`, it opens the file named. See "Load path" below for where it is searched.
+  - In a comment or any other string: nothing, also on a commented-out `needs`. A quoted string does not name a file to load: `needs {|a.ml|}` is not followed.
 - Completion: suggests what continues the word or path under the cursor.
   At most 200 items; a longer list is marked incomplete, so the editor asks
   again as more is typed. A change on disk to a file already loaded shows

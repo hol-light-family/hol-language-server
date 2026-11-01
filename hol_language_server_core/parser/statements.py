@@ -11,7 +11,7 @@ from hol_language_server_core.parser.lexer import (Lexer, LexerState, ParserErro
 from hol_language_server_core.parser.model import (CustomCommands, Definition, DefinitionType, Dependency, LoadPath,
                                                    Module, OpenDecl, ParseResult)
 from hol_language_server_core.parser.terms import declared_infixes, term_constants
-from hol_language_server_core.text import CHAR_LITERAL, Position, Range
+from hol_language_server_core.text import CHAR_LITERAL, QUOTED_STRING_OPEN, Position, Range
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ def parse_text(text: str, file_path: str, custom: CustomCommands,
 def _skip_re(search_module_end: bool) -> re.Pattern[str]:
     words = "module|begin|end|let" if search_module_end else "module|let"
     return re.compile(
-        CHAR_LITERAL + r"|\(\*|" + r'["`]|;;+|\b(?:' + words + r")\b"
+        CHAR_LITERAL + r"|\(\*|" + QUOTED_STRING_OPEN + r'|["`]|;;+|\b(?:' + words + r")\b"
     )
 
 
@@ -113,6 +113,9 @@ class Parser(Lexer):
                 pos = self.pos
             elif tok == '"':
                 self._parse_string(m.start())
+                pos = self.pos
+            elif tok[0] == "{":
+                self._parse_quoted_string(m.start())
                 pos = self.pos
             elif tok == "`":
                 self._parse_term(m.start())
@@ -696,6 +699,8 @@ class Parser(Lexer):
                 and prev.type == TokenType.identifier
                 and self._import_re.match(prev.value or "")
                 and token.type == TokenType.string
+                # Not a quoted string: `needs {|a.ml|}` is not read.
+                and self.text[token.start_pos] == '"'
                 # Skip very long strings: most definitely invalid
                 # (probably not properly closed yet).
                 and token.end_pos - token.start_pos <= 2000

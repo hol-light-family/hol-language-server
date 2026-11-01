@@ -258,6 +258,21 @@ def test_hover_definition_and_symbols():
         client.notify("textDocument/didClose", {"textDocument": {"uri": uri(TACTICS)}})
 
 
+def test_comments_and_strings_are_not_lookups_over_lsp():
+    from hol_server_paths import HOL
+
+    path = os.path.join(PROJECT, "no_lookups.ml")
+    with start_server(HOL) as (client, _):
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        client.notify(
+            "textDocument/didOpen",
+            {"textDocument": {"uri": uri(path), "languageId": "ocaml", "version": 1, "text": text}},
+        )
+        check_lsp_lookup_comments(client, path, text)
+        client.notify("textDocument/didClose", {"textDocument": {"uri": uri(path)}})
+
+
 def test_word_binders_over_lsp():
     from hol_server_paths import HOL
 

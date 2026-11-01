@@ -3,13 +3,14 @@
 import re
 
 from hol_language_server_core.parser import Lexer, Token, TokenType
-from hol_language_server_core.text import CHAR_LITERAL
+from hol_language_server_core.text import CHAR_LITERAL, QUOTED_STRING
 
 
 # Comments match by their opening only (they nest).
 REFERENCE_RE = re.compile(
     r"\(\*"
     + r'|"(?:[^"\\]|\\[\s\S])*"'
+    + r"|" + QUOTED_STRING
     + r"|`[^`]*`"
     + r"|" + CHAR_LITERAL
     + r"|\d[\w'.]*"
