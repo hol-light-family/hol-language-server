@@ -9,12 +9,12 @@ from hol_language_server_core import util
 from hol_language_server_core.config import Settings, expand_root_paths
 from hol_language_server_core.database import Database, Dependency
 from hol_language_server_core.parser import (OCAML_KEYWORDS, DEFINITION_TYPE_NAMES, Definition, DefinitionType,
-                                             Module, skip_comments)
+                                             Module, Token, TokenType, skip_comments)
 from hol_language_server_core.service.results import (Completion, DefinitionTarget, MissingLoad, Reference,
                                                       SourceInfo, SymbolInfo, definition_symbol, module_symbol)
 from hol_language_server_core.service.scope import bound_names, local_binding
-from hol_language_server_core.service.terms import bound_in_term, hol_word_at, term_start
-from hol_language_server_core.service.tokens import REFERENCE_RE, is_name_start
+from hol_language_server_core.service.terms import bound_in_term, hol_word_at
+from hol_language_server_core.service.tokens import REFERENCE_RE, enclosing_token, is_name_start
 from hol_language_server_core.text import Position, Range, TextDoc, location
 
 
@@ -123,13 +123,10 @@ class HolLanguageService:
         if position.line < 0 or position.line >= doc.line_count:
             return None
         offset = doc.offset_at(position)
-        file = self.database.get_file_index(doc.path)
-        # Top-level items start outside terms: scan from the last one.
-        start = max((d.source_start for d in file.definitions
-                     if d.source_start is not None and d.source_start <= offset), default=0) if file else 0
-        term = term_start(doc.text, start, offset)
-        if term is None:
+        region = self._enclosing_token(doc, offset)
+        if region is None or region.type != TokenType.term:
             return None
+        term = region.start_pos
         line = doc.line_at(position.line)
         span = hol_word_at(line, position.character)
         if span is None:
@@ -208,14 +205,16 @@ class HolLanguageService:
         """Names, module members, or import paths completing the position."""
         if position.line < 0 or position.line >= doc.line_count:
             return []
-        files = self._completion_file_names(doc, position)
-        if files is not None:
-            return files
-        terms = self._completion_terms(doc, position)
-        if terms is not None:
-            return terms
-        if self._in_comment_or_string(doc, position):
-            return []
+        region = self._enclosing_token(doc, doc.offset_at(position))
+        if region is not None:
+            if region.type == TokenType.comment:
+                return []
+            if region.type == TokenType.string:
+                return self._completion_file_names(doc, position, region)
+            terms = self._completion_terms(doc, position, region.start_pos)
+            if terms is not None:
+                return terms
+            # An `^` antiquotation names an OCaml value: complete names.
         if self._at_binder_position(doc, position):
             return []
         word, word_range = util.get_word_at_position(doc, position)
@@ -250,20 +249,19 @@ class HolLanguageService:
             edit_range=edit_range,
         )
 
-    def _completion_terms(self, doc: TextDoc, position: Position) -> list[Completion] | None:
-        """Constants starting with the name at the position in a term, or
-        None outside terms and in an `^` antiquotation, which names an OCaml
-        value. A variable the term binds completes to nothing."""
-        if position.line < 0 or position.line >= doc.line_count:
-            return None
-        offset = doc.offset_at(position)
+    def _enclosing_token(self, doc: TextDoc, offset: int) -> Token | None:
+        """The comment, string, or term holding the offset."""
         file = self.database.get_file_index(doc.path)
-        # Top-level items start outside terms: scan from the last one.
+        # Top-level items start outside all three: lex from the last one.
         start = max((d.source_start for d in file.definitions
                      if d.source_start is not None and d.source_start <= offset), default=0) if file else 0
-        term = term_start(doc.text, start, offset)
-        if term is None:
-            return None
+        return enclosing_token(doc.text, start, offset)
+
+    def _completion_terms(self, doc: TextDoc, position: Position, term: int) -> list[Completion] | None:
+        """Constants starting with the name at the position in the term
+        opening at term, or None in an `^` antiquotation, which names an
+        OCaml value. A variable the term binds completes to nothing."""
+        offset = doc.offset_at(position)
         line = doc.line_at(position.line)
         span = hol_word_at(line, position.character)
         if span is None:
@@ -282,29 +280,6 @@ class HolLanguageService:
         found = self.database.filter_constants_by_name(lambda name: name.startswith(prefix), deps)
         edit_range = Range(position.with_(character=begin), position.with_(character=end))
         return [self._definition_completion(constant, False, edit_range) for constant in found]
-
-    def _in_comment_or_string(self, doc: TextDoc, position: Position) -> bool:
-        """Whether the position is inside a comment or a string: tokenize
-        like term_start, with an unclosed quote running to the end."""
-        text, offset = doc.text, doc.offset_at(position)
-        pos = 0
-        while True:
-            match = REFERENCE_RE.search(text, pos)
-            quote = text.find('"', pos)
-            if quote != -1 and quote < offset and (match is None or quote < match.start()):
-                # A quote no token starts at: an unclosed string, or inside one.
-                return True
-            if match is None or match.start() >= offset:
-                return False
-            if match.group(0) == "(*":
-                pos = skip_comments(text, match.start())
-                if pos > offset or (pos == offset == len(text) and not text.endswith("*)")):
-                    # An unclosed comment runs past the end of the text.
-                    return True
-                continue
-            if match.end() > offset:
-                return match.group(0).startswith('"')
-            pos = match.end()
 
     def _at_binder_position(self, doc: TextDoc, position: Position) -> bool:
         """Whether the position declares a name instead of using one: after
@@ -359,22 +334,18 @@ class HolLanguageService:
                          for mod in module.modules if mod.name.startswith(prefix))
         return items
 
-    def _completion_file_names(self, doc: TextDoc, position: Position) -> list[Completion] | None:
-        """Files and folders completing an import string, or None outside one."""
+    def _completion_file_names(self, doc: TextDoc, position: Position, string: Token) -> list[Completion]:
+        """Files and folders completing the string the position is in, when
+        an import opens it on the cursor's line; else nothing."""
         imports = ["needs", "loads", "loadt", *self._settings.custom_commands.imports]
+        quote = doc.position_at(string.start_pos)
         line = doc.line_at(position.line)
-        # The last import opened at or before the cursor; a line holds several.
-        opens = [m for m in re.finditer(r'\b(' + "|".join(imports) + r')\s*"', line)
-                 if m.end() <= position.character]
-        if not opens:
-            return None
-        match = opens[-1]
-        prefix = line[match.end():position.character]
-        if '"' in prefix:
-            return None
+        command = re.search(r"\b(" + "|".join(imports) + r")\s*$", line[:quote.character])
+        if quote.line != position.line or command is None:
+            return []
+        prefix = line[quote.character + 1:position.character]
         directory, _, name_prefix = prefix.rpartition("/")
         name_start = position.character - len(name_prefix)
-        line = doc.line_at(position.line)
         name_end = position.character
         # The edit covers the rest of the path segment too.
         while name_end < len(line) and line[name_end] not in "/\"":
@@ -383,7 +354,7 @@ class HolLanguageService:
         items: list[Completion] = []
         searched: set[str] = set()
         # `loads` resolves under the HOL Light directory only.
-        roots = [self._settings.hol_path] if match.group(1) == "loads" else self.root_paths
+        roots = [self._settings.hol_path] if command.group(1) == "loads" else self.root_paths
         for root in roots:
             base = os.path.dirname(doc.path) if root == "." else root
             search_dir = os.path.abspath(os.path.join(base, directory))

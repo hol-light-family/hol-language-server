@@ -42,8 +42,8 @@ The language server `hol-language-server` gives an editor lookups over HOL Light
     the closing backquote is still missing. A variable the term binds
     completes to nothing, and an `^` antiquotation completes OCaml names
     instead.
-  - In a comment, a string, or on an operator: nothing. Only import strings
-    complete, to file names.
+  - In a comment, a string, or on an operator: nothing. Only an uncommented
+    import string completes, to file names.
 - Symbols.
   - The outline of the open file: every definition and module in it.
   - Search across all files read: names containing the search text, ignoring case, at most 1000 results.

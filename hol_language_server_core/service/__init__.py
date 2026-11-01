@@ -19,7 +19,8 @@ from hol_language_server_core.service.results import (
     module_symbol,
 )
 from hol_language_server_core.service.scope import bound_names, local_binding
-from hol_language_server_core.service.terms import bound_in_term, hol_word_at, term_start
+from hol_language_server_core.service.terms import bound_in_term, hol_word_at
+from hol_language_server_core.service.tokens import enclosing_token
 
 __all__ = [
     "Completion",
@@ -32,9 +33,9 @@ __all__ = [
     "bound_in_term",
     "bound_names",
     "definition_symbol",
+    "enclosing_token",
     "hol_word_at",
     "local_binding",
     "module_symbol",
     "resolve_path",
-    "term_start",
 ]

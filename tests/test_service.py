@@ -336,12 +336,14 @@ def test_completion_is_empty_without_a_word():
     assert service.completion(doc, Position(-1, 0)) == []
 
 
-def test_completion_is_empty_in_an_unclosed_comment_or_string():
+def test_completion_is_empty_in_an_unclosed_comment_string_or_term_import():
     service = example_service()
     path = os.path.join(PROJECT, "completion.ml")
     service.index(path, True)
     doc = service.get_document(path)
-    probes = ["(* Gadget widg", 'let s = "hello Gad', "(* outer (* x *) Gadget widg"]
+    # lib/util.ml exists, so the last two would list it were they imports.
+    probes = ["(* Gadget widg", 'let s = "hello Gad', "(* outer (* x *) Gadget widg",
+              '(* needs "lib/u', 'let t = `needs "lib/u']
     for probe in probes:
         changed = service.open_document(path, doc.text + "\n" + probe)
         position = Position(changed.line_count - 1, len(probe))

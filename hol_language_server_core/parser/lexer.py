@@ -74,9 +74,12 @@ OCAML_KEYWORDS = set(
 
 
 class Token:
-    def __init__(self, token_type: TokenType, start: int, end: int, value: str | None = None) -> None:
+    def __init__(self, token_type: TokenType, start: int, end: int, value: str | None = None,
+                 closed: bool = True) -> None:
         self.type = token_type
         self.value = value
+        # False for a comment, string, or term the text ends inside.
+        self.closed = closed
         self.start_pos = start
         self.end_pos = end
         self._start_position: Position | None = None
@@ -182,7 +185,7 @@ class Lexer:
                 level -= 1
             p = m.end()
         self.pos = len(self.text)
-        return Token(TokenType.comment, pos, self.pos)
+        return Token(TokenType.comment, pos, self.pos, closed=False)
 
     def _parse_string(self, pos: int) -> Token:
         pattern = re.compile(r'"|\\.')
@@ -196,12 +199,12 @@ class Lexer:
                 return Token(TokenType.string, pos, self.pos)
             p = m.end()
         self.pos = len(self.text)
-        return Token(TokenType.string, pos, self.pos)
+        return Token(TokenType.string, pos, self.pos, closed=False)
 
     def _parse_term(self, pos: int) -> Token:
         end = self.text.find("`", pos + 1)
         self.pos = len(self.text) if end < 0 else end + 1
-        return Token(TokenType.term, pos, self.pos)
+        return Token(TokenType.term, pos, self.pos, closed=end >= 0)
 
     def skip_comments(self) -> None:
         while self.peek().type == TokenType.comment:
