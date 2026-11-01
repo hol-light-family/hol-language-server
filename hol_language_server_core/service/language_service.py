@@ -1,5 +1,6 @@
 """Static lookup over HOL Light sources. The servers are thin layers over it."""
 
+import logging
 import os
 import re
 import string
@@ -16,6 +17,8 @@ from hol_language_server_core.service.scope import bound_names, local_binding
 from hol_language_server_core.service.terms import bound_in_term, hol_word_at, in_open_binder
 from hol_language_server_core.service.tokens import REFERENCE_RE, enclosing_token, is_name_start
 from hol_language_server_core.text import Position, Range, TextDoc, location
+
+logger = logging.getLogger(__name__)
 
 # `let`, `let rec`, `and`, `fun`, `module`, or `module type`, then names
 # only up to the word being typed, in tuples or lists if any: the position
@@ -69,26 +72,52 @@ class HolLanguageService:
 
     def index_workspace(self) -> list[Dependency]:
         """Index every .ml and .hl file under the workspace root, except
-        hidden directories and node_modules. Returns the unresolved dependencies."""
+        hidden directories and node_modules. A directory or file that cannot
+        be read is logged and skipped. Returns the unresolved dependencies."""
         files: list[str] = []
+        # Real paths, so a link back up the tree ends the walk.
+        visited: set[str] = set()
+        # Walked after the real tree, so a directory reached both ways keeps its real path.
+        links: list[str] = []
 
         def walk(directory: str) -> None:
-            for entry in util.read_dir(directory):
+            real = os.path.realpath(directory)
+            if real in visited:
+                return
+            visited.add(real)
+            try:
+                entries = util.read_dir(directory)
+            except OSError as err:
+                logger.warning("Skipping directory %s: %s", directory, err)
+                return
+            for entry in sorted(entries, key=lambda entry: entry.name):
                 if entry.name.startswith(".") or entry.name == "node_modules":
                     continue
                 path = os.path.join(directory, entry.name)
-                if entry.is_dir(follow_symlinks=True):
-                    walk(path)
-                elif entry.is_file(follow_symlinks=True) and re.search(
-                    r"\.(?:ml|hl)$", entry.name
-                ):
-                    files.append(path)
+                try:
+                    if entry.is_dir(follow_symlinks=True):
+                        if entry.is_symlink():
+                            links.append(path)
+                        else:
+                            walk(path)
+                    elif entry.is_file(follow_symlinks=True) and re.search(
+                        r"\.(?:ml|hl)$", entry.name
+                    ):
+                        files.append(path)
+                except OSError as err:
+                    # A link to itself, for one.
+                    logger.warning("Skipping %s: %s", path, err)
 
         walk(self._settings.workspace)
+        while links:
+            walk(links.pop(0))
         files.sort()
         unresolved: list[Dependency] = []
         for file in files:
-            unresolved.extend(self.index(file, False))
+            try:
+                unresolved.extend(self.index(file, False))
+            except OSError as err:
+                logger.warning("Skipping file %s: %s", file, err)
         return unresolved
 
     def find_symbols(self, name: str, deps: set[str] | None = None) -> list[SymbolInfo]:

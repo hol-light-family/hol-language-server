@@ -6,7 +6,7 @@
    name filters on the text before the cursor, and before the dot the head
    name itself completes. Word-start probes complete to nothing.
    Checked: the labels and kinds in the `complete` comments. Docs, edit spans,
-   and commit characters stay procedural in test_service.py. *)
+   and commit characters stay procedural in service/test_completion.py. *)
 
 needs "lib/util.ml";;
 

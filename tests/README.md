@@ -9,11 +9,16 @@ then dies without its dependencies.)
 
 - `test_core.py`: the parser, the index (`database.py`), and the service
   lookups.
-- `test_service.py`: the lookups behind editor features: positions, hover, go to
-  definition, document and workspace symbols, and settings.
+- `service/`: the service behind editor features, called directly.
+    - `test_service.py`: positions, hover, go to definition, and document and
+      workspace symbols.
+    - `test_completion.py`: completion of names, members, constants, and import paths.
+    - `test_loads.py`: finding what files load: the load path, workspace indexing,
+      custom imports, and missing loads.
+    - `test_settings.py`: settings from flags and editor options.
 - `test_lsp_server.py`: starts `lsp_server.py` and talks to it over stdio as
   an editor would, end to end.
-- `hol_server_paths.py`: paths to the example files, shared by the tests.
+- `hol_server_paths.py`: paths to the example files, and a service over them, shared by the tests.
 - `expectations.py`: reads and checks the `expect` comments of an example
   file (below).
 - `lookups.py`: reads and checks the `goto`, `hover`, and `complete`
