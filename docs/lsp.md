@@ -24,7 +24,7 @@ The language server `hol-language-server` gives an editor lookups over HOL Light
     - An infix head, as in `x IN s = ...`, is found when it is a symbol, is declared with `parse_as_infix` in the same file or a core HOL Light file, or the name before it is bound by `!` or `forall`. Otherwise the name before it is taken.
     - Not read: constructors of `define_type`, `new_specification`, and constants named through an overloaded interface: `inv` finds nothing, and `+` finds every definition written with `+`.
     - Terms in Unicode syntax are not read.
-  - On `needs "..."`, it opens the file named.
+  - On `needs "..."`, it opens the file named. See "Load path" below for where it is searched.
 - Completion: suggests what continues the word or path under the cursor.
   At most 200 items; a longer list is marked incomplete, so the editor asks
   again as more is typed. A change on disk to a file already loaded shows
@@ -57,6 +57,18 @@ The language server `hol-language-server` gives an editor lookups over HOL Light
   - A `needs`, `loads` or `loadt` (or custom import) whose file cannot be found gets a warning underline on the file name.
   - This covers the open file and every file it loads. Those show in the Problems panel.
   - The underline goes away once the file is found, for example after fixing the name.
+
+## Load path
+
+`load_path` is a runtime value in HOL Light, so the server reads only the simple statements, with string constants:
+
+- `load_path := "dir" :: !load_path;;` and `load_path := ["dir"] @ !load_path;;`: searched before the root paths.
+- `load_path := !load_path @ ["dir"];;`: searched after them.
+- `load_path := ["dir"];;`: searched first. The root paths stay, so a load the server cannot judge gets no warning.
+
+Such a statement applies to the later loads of the same file (`needs`, `loadt`, and custom imports, not `loads`), in order, and to completion of their paths. It does not reach the files that file loads, or the file that loads it. An initial `$/` is the HOL Light directory and `$$` a real `$`. A relative directory is tried under each root path. Anything else assigned to `load_path`, such as `Filename.concat (!hol_dir) "dir"`, is not read.
+
+Directories from `--load-path` or the `HOLLIGHT_LOAD_PATH` environment variable ([configuration.md](configuration.md)) apply to every file, after the root paths and before what `!load_path @ [...]` adds.
 
 ## Settings
 

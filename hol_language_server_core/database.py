@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from hol_language_server_core import util
 from hol_language_server_core.config import DEBUG
-from hol_language_server_core.parser import (CustomCommands, Definition, Module, OpenDecl, ParseResult,
+from hol_language_server_core.parser import (CustomCommands, Definition, LoadPath, Module, OpenDecl, ParseResult,
                                              declared_infixes, parse_text)
 from hol_language_server_core.parser import Dependency as ParsedDependency
 from hol_language_server_core.text import Location, Position, Range, TextDoc, astral_lines, location
@@ -47,6 +47,19 @@ class Dependency:
         return location(self.path, Position(0, 0))
 
 
+def _search_dirs(load_path: LoadPath, hol_path: str, base_path: str, root_paths: list[str]) -> list[str]:
+    """The directories a load searches, in order. A relative `load_path` entry
+    is relative to the working directory of HOL Light, which the server does
+    not know: it is tried under each root."""
+    roots = [base_path if root == "." else root for root in root_paths]
+
+    def entries(paths: tuple[str, ...]) -> list[str]:
+        return [os.path.join(root, util.hol_expand_directory(path, hol_path))
+                for path in paths for root in roots]
+
+    return [*entries(load_path.before), *roots, *entries(load_path.after)]
+
+
 def _resolve_dependency_path(dep: ParsedDependency, hol_path: str, base_path: str,
                              root_paths: list[str]) -> str | None:
     if os.path.isabs(dep.name):
@@ -55,8 +68,8 @@ def _resolve_dependency_path(dep: ParsedDependency, hol_path: str, base_path: st
         # hol_path is only used for `loads` dependencies.
         candidate = os.path.join(hol_path, dep.name)
         return candidate if util.file_exists(candidate, False) else None
-    for root in root_paths:
-        candidate = os.path.join(base_path if root == "." else root, dep.name)
+    for directory in _search_dirs(dep.load_path, hol_path, base_path, root_paths):
+        candidate = os.path.join(directory, dep.name)
         if util.file_exists(candidate, False):
             return candidate
     return None
@@ -90,6 +103,7 @@ class FileIndex:
         self.constants = result.constants
         self.modules = result.modules
         self.global_module = result.global_module
+        self.load_path_updates = result.load_path_updates
 
 
 def _text_key(text: str) -> tuple[int, int]:
@@ -160,6 +174,15 @@ class Database:
             if predicate(name):
                 found.extend(c for c in items if c.get_file_path() in deps)
         return found
+
+    def search_dirs(self, file_path: str, offset: int, hol_path: str, root_paths: list[str]) -> list[str]:
+        """The directories a load at the offset of the file searches."""
+        file = self._file_index.get(file_path)
+        load_path = LoadPath()
+        for end, updated in file.load_path_updates if file is not None else []:
+            if end <= offset:
+                load_path = updated
+        return _search_dirs(load_path, hol_path, os.path.dirname(file_path), root_paths)
 
     def find_dependency(self, file_path: str, name: str) -> Dependency | None:
         file = self._file_index.get(file_path)
@@ -473,9 +496,11 @@ class Database:
         doc_dep_names = {dep.name: dep for dep in result.dependencies}
         old_file = self._file_index.get(doc_path)
         old_names = [dep.name for dep in old_file.dependencies] if old_file is not None else []
-        if not full_index and not util.difference(doc_dep_names.keys(), old_names):
-            # No full indexing and no new dependency names: update the index
-            # without resolving dependencies.
+        old_load_paths = [path for _, path in old_file.load_path_updates] if old_file is not None else []
+        same_load_paths = old_load_paths == [path for _, path in result.load_path_updates]
+        if not full_index and same_load_paths and not util.difference(doc_dep_names.keys(), old_names):
+            # No full indexing, no new dependency names, and no change to the
+            # load path: update the index without resolving dependencies.
             file = self._file_index.get(doc_path)
             deps = (
                 [

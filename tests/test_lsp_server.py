@@ -274,7 +274,8 @@ def test_word_binders_over_lsp():
 
 
 @pytest.mark.parametrize(
-    "name", ["completion.ml", "completion_files.ml", "completion_unclosed_term.ml", "constants.ml", "word_binders.ml"])
+    "name", ["completion.ml", "completion_files.ml", "completion_unclosed_term.ml", "constants.ml", "word_binders.ml",
+             "../load_path/main.ml"])
 def test_completion_offers_what_the_complete_comments_say(name: str):
     from hol_server_paths import HOL
 
@@ -368,6 +369,70 @@ def test_a_deleted_load_of_a_loaded_file_is_shown(tmp_path: Path):
         last.write_text("let zz_last = 1;;\n", encoding="utf-8")
         client.request("textDocument/hover", params)
         assert client.diagnostics(str(tmp_path / "middle.ml")) == []
+        client.notify("textDocument/didClose", {"textDocument": {"uri": uri(path)}})
+
+
+def test_load_path_updates_change_what_is_missing(tmp_path: Path):
+    from hol_server_paths import HOL
+
+    (tmp_path / "vendor").mkdir()
+    (tmp_path / "vendor" / "v.ml").write_text("let v = 1;;\n", encoding="utf-8")
+    path = str(tmp_path / "t.ml")
+    text = 'needs "v.ml";;\n'
+    with start_server(HOL) as (client, _):
+        client.notify(
+            "textDocument/didOpen",
+            {"textDocument": {"uri": uri(path), "languageId": "ocaml", "version": 1, "text": text}},
+        )
+        client.request("textDocument/documentSymbol", {"textDocument": {"uri": uri(path)}})
+        [missing] = client.diagnostics(path) or []
+        assert missing["message"] == "File not found: v.ml"
+        # Only the load path changes: the load's name is the same.
+        client.notify(
+            "textDocument/didChange",
+            {"textDocument": {"uri": uri(path), "version": 2},
+             "contentChanges": [{"text": 'load_path := "vendor" :: !load_path;;\n' + text}]},
+        )
+        client.request("textDocument/documentSymbol", {"textDocument": {"uri": uri(path)}})
+        assert client.diagnostics(path) == []
+        client.notify("textDocument/didClose", {"textDocument": {"uri": uri(path)}})
+
+
+def test_the_environment_load_path_reaches_the_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from hol_server_paths import HOL
+
+    (tmp_path / "extra").mkdir()
+    (tmp_path / "extra" / "in_extra.ml").write_text("let in_extra = 1;;\n", encoding="utf-8")
+    monkeypatch.setenv("HOLLIGHT_LOAD_PATH", str(tmp_path / "extra"))
+    path = str(tmp_path / "t.ml")
+    with start_server(HOL) as (client, _):
+        client.notify(
+            "textDocument/didOpen",
+            {"textDocument": {"uri": uri(path), "languageId": "ocaml", "version": 1,
+                              "text": 'needs "in_extra.ml";;\n'}},
+        )
+        client.request("textDocument/documentSymbol", {"textDocument": {"uri": uri(path)}})
+        assert not client.diagnostics(path)
+        [target] = client.request(
+            "textDocument/definition",
+            {"textDocument": {"uri": uri(path)}, "position": {"line": 0, "character": 8}},
+        )
+        assert target["uri"] == uri(str(tmp_path / "extra" / "in_extra.ml"))
+        client.notify("textDocument/didClose", {"textDocument": {"uri": uri(path)}})
+
+
+def test_load_path_diagnostics():
+    from hol_server_paths import EXAMPLES, HOL
+
+    path = os.path.join(EXAMPLES, "load_path", "main.ml")
+    with start_server(HOL) as (client, _):
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        client.notify(
+            "textDocument/didOpen",
+            {"textDocument": {"uri": uri(path), "languageId": "ocaml", "version": 1, "text": text}},
+        )
+        check_lsp_diagnostics(client, path, text)
         client.notify("textDocument/didClose", {"textDocument": {"uri": uri(path)}})
 
 

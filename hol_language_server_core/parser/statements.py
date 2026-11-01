@@ -8,8 +8,8 @@ from dataclasses import dataclass
 
 from hol_language_server_core.parser.lexer import (Lexer, LexerState, ParserError, Token, TokenType, end_position,
                                                    line_number)
-from hol_language_server_core.parser.model import (CustomCommands, Definition, DefinitionType, Dependency, Module,
-                                                   OpenDecl, ParseResult)
+from hol_language_server_core.parser.model import (CustomCommands, Definition, DefinitionType, Dependency, LoadPath,
+                                                   Module, OpenDecl, ParseResult)
 from hol_language_server_core.parser.terms import declared_infixes, term_constants
 from hol_language_server_core.text import CHAR_LITERAL, Position, Range
 
@@ -30,6 +30,31 @@ def _skip_re(search_module_end: bool) -> re.Pattern[str]:
 
 
 _SKIP_RE = {True: _skip_re(True), False: _skip_re(False)}
+
+# An update of `load_path` with string constants only: `"a" :: !load_path`,
+# `["a"] @ !load_path`, `!load_path @ ["a"]`, or `["a"]`. It is a runtime value:
+# anything else is not read.
+_STRING = r'"[^"\\\n]*"'
+_STRING_LIST = r"\[\s*(?:" + _STRING + r"(?:\s*;\s*" + _STRING + r")*\s*;?\s*)?\]"
+_CURRENT = r"(?:!load_path|\(\s*!load_path\s*\))"
+_LOAD_PATH_UPDATE_RE = re.compile(
+    r"\s*:=\s*(?:"
+    r"(?P<cons>(?:" + _STRING + r"\s*::\s*)+)" + _CURRENT
+    + r"|(?P<prefix>" + _STRING_LIST + r")\s*@\s*" + _CURRENT
+    + r"|" + _CURRENT + r"\s*@\s*(?P<suffix>" + _STRING_LIST + r")"
+    + r"|(?P<whole>" + _STRING_LIST + r"))\s*(?:;|$)"
+)
+
+
+def _updated_load_path(update: re.Match[str], current: LoadPath) -> LoadPath:
+    """The load path after the update. A whole new list counts as searched
+    first: the root paths stay, so a load the server cannot judge is not
+    reported as missing."""
+    def strings(group: str) -> tuple[str, ...]:
+        return tuple(text[1:-1] for text in re.findall(_STRING, update.group(group) or ""))
+
+    return LoadPath(strings("cons") + strings("prefix") + strings("whole") + current.before,
+                    current.after + strings("suffix"))
 
 
 @dataclass
@@ -650,14 +675,22 @@ class Parser(Lexer):
             except ParserError as err:
                 self._report(f"Error: {err}", err.token, uri)
 
-    def _scan_imports(self, dependencies: list[Dependency]) -> None:
-        """Record every import call with its string argument, wherever it sits."""
+    def _scan_imports(self, dependencies: list[Dependency]) -> list[tuple[int, LoadPath]]:
+        """Record every import call with its string argument, wherever it
+        sits, under the load path at that point. Returns the load path updates."""
         state = self.save_state()
         prev: Token | None = None
+        load_path = LoadPath()
+        updates: list[tuple[int, LoadPath]] = []
         while True:
             token = self.next_token()
             if token.type == TokenType.eof:
                 break
+            if token.value == "load_path":
+                update = _LOAD_PATH_UPDATE_RE.match(self.text, token.end_pos)
+                if update is not None:
+                    load_path = _updated_load_path(update, load_path)
+                    updates.append((update.end(), load_path))
             if (
                 prev is not None
                 and prev.type == TokenType.identifier
@@ -679,10 +712,12 @@ class Parser(Lexer):
                                 token.get_start_position(self._line_starts),
                                 token.get_end_position(self._line_starts),
                             ),
+                            load_path,
                         )
                     )
             prev = token
         self.reset_state(state)
+        return updates
 
     def parse(self, uri: str) -> ParseResult:
         self.pos = 0
@@ -696,7 +731,7 @@ class Parser(Lexer):
         module_stack: list[Module] = []
 
         # Imports sit anywhere in a statement (`then loads "x"`), so they get their own scan.
-        self._scan_imports(dependencies)
+        load_path_updates = self._scan_imports(dependencies)
 
         while self.peek().type != TokenType.eof:
             # Save and restore the state at the end of the loop: parsing may
@@ -772,7 +807,7 @@ class Parser(Lexer):
             for mod in module_stack:
                 self._report(f"Unclosed module: {mod.name}", mod.start, uri)
 
-        return ParseResult(definitions, modules, dependencies, global_module, self._constants)
+        return ParseResult(definitions, modules, dependencies, global_module, self._constants, load_path_updates)
 
     def _report(self, message: str, token_or_offset: Token | int | None, uri: str) -> None:
         """Warn about something the parser skipped or misread."""

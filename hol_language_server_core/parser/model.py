@@ -9,14 +9,25 @@ from enum import IntEnum
 from hol_language_server_core.text import Location, Position, Range, location
 
 
+@dataclass(frozen=True)
+class LoadPath:
+    """What the `load_path` statements read so far add to the search."""
+    # Searched before the root paths, and after them.
+    before: tuple[str, ...] = ()
+    after: tuple[str, ...] = ()
+
+
 class Dependency:
-    def __init__(self, name: str, hol_light_relative: bool, name_range: Range) -> None:
+    def __init__(self, name: str, hol_light_relative: bool, name_range: Range,
+                 load_path: LoadPath = LoadPath()) -> None:
         self.name = name
         # Resolve relative to the HOL Light base directory, not the
         # workspace roots, when the loader is `loads`.
         self.hol_light_relative = hol_light_relative
         # The quoted file name in the source.
         self.range = name_range
+        # The file's `load_path` at this load.
+        self.load_path = load_path
 
 
 class DefinitionType(IntEnum):
@@ -131,6 +142,8 @@ class ParseResult:
     global_module: Module
     # HOL constants the definitions introduce, found in their terms.
     constants: list[Definition] = field(default_factory=list[Definition])
+    # The `load_path` after each statement updating it, with the statement's end offset.
+    load_path_updates: list[tuple[int, LoadPath]] = field(default_factory=list[tuple[int, LoadPath]])
 
 
 @dataclass
