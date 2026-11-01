@@ -22,7 +22,7 @@ then dies without its dependencies.)
 - `examples/`: each file starts with a comment saying what it sets up and what
   the tests check in it.
     - `hol/`: stands in for a HOL Light directory (`hol.ml`, `kernel.ml`).
-    - `project/`: a small workspace whose files load each other. Each file sets up a case: `main.ml` loads a file that does not exist, `dup.ml` defines the same name twice, `ctx.ml` uses names loaded only by the file that loads it, `conversions.ml` builds and uses conversions, `locals.ml` has `let ... in` names and function parameters, `constants.ml` defines HOL constants and uses them in terms, `bound.ml` binds the name of a constant in a term, `comment_defs.ml` defines a name for real next to a commented-out one, plus a name that exists only in a comment, `completion.ml` probes name and member completion with `complete` comments, `completion_files.ml` probes import paths the same way, and `completion_unclosed_term.ml` probes term completion without the closing backquote.
+    - `project/`: a small workspace whose files load each other. Each file sets up a case: `main.ml` loads a file that does not exist, `dup.ml` defines the same name twice, `ctx.ml` uses names loaded only by the file that loads it, `conversions.ml` builds and uses conversions, `locals.ml` has `let ... in` names and function parameters, `constants.ml` defines HOL constants and uses them in terms, `bound.ml` binds the name of a constant in a term, `word_binders.ml` does the same with `forall` and the other word binders, `comment_defs.ml` defines a name for real next to a commented-out one, plus a name that exists only in a comment, `completion.ml` probes name and member completion with `complete` comments, `completion_files.ml` probes import paths the same way, and `completion_unclosed_term.ml` probes term completion without the closing backquote.
     - `definitions.ml`, `modules.ml`, `sources.ml`: single files for parser
       cases, with their expected results in `expect` comments. `sources.ml`
       checks where the source of each definition starts and ends.
@@ -81,7 +81,9 @@ ones in `constants.ml`, and `test_unclosed_terms_offer_what_the_complete_comment
 checks the one in `completion_unclosed_term.ml`. `test_hover_definition_and_symbols`
 in `test_lsp_server.py` drives the `tactics.ml` ones end to end over LSP
 (same-file targets only), and `test_completion_offers_what_the_complete_comments_say`
-there drives the `complete` ones of the same four files.
+there drives the `complete` ones of those files and `word_binders.ml`.
+`test_word_binders_read_like_symbol_ones` checks all of that file, and
+`test_word_binders_over_lsp` its `goto` and `hover` ones over LSP.
 
 ```ocaml
 let USES = `2 divides_alt 4 /\ evens 4`;;

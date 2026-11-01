@@ -16,7 +16,7 @@ HOL_TOKEN_RE = re.compile(
 )
 _HOL_OPEN = {"(", "[", "{"}
 _HOL_CLOSE = {")", "]", "}"}
-_HOL_BINDERS = {"!", "?", "?!", "\\", "@", "lambda"}
+_HOL_BINDERS = {"!", "?", "?!", "\\", "@", "lambda", "forall", "exists", "existsunique"}
 # Their body extends as far right as possible: `@y. p /\ q` is one term.
 _HOL_OPAQUE = _HOL_BINDERS | {"if", "let", "match", "function"}
 
@@ -70,12 +70,12 @@ def _closing(tokens: _Tokens) -> int:
 
 
 def _strip_clause(tokens: _Tokens, bound: set[str]) -> _Tokens:
-    """The clause without enclosing brackets and leading `!x y.` binders,
+    """The clause without enclosing brackets and leading `!x y.` or `forall x y.` binders,
     whose names are added to bound."""
     while tokens:
         if tokens[0][0] == "(" and _closing(tokens) == len(tokens) - 1:
             tokens = tokens[1:-1]
-        elif tokens[0][0] == "!":
+        elif tokens[0][0] in ("!", "forall"):
             dot = next((i for i, t in enumerate(tokens) if t[0] == "."), None)
             if dot is None:
                 return []
@@ -141,7 +141,7 @@ def term_constants(term: str, infixes: set[str], inductive: bool) -> list[tuple[
     term: the head of the left side of each `/\\` clause, as in
     `fib 0 = 0 /\\ fib (n + 1) = ...`, or of each rule's conclusion for an
     inductive definition. An infix head (`x IN s`, `m <= n`) is found when it
-    is a symbol, is in infixes, or the name before it is bound by `!`."""
+    is a symbol, is in infixes, or the name before it is bound by `!` or `forall`."""
     tokens = _hol_tokens(term)
     # `<=>` binds looser than `/\`: a term with `<=>` outside brackets is one equation.
     if inductive or len(_split_top(tokens, {"<=>"})) == 1:

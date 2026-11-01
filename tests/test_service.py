@@ -350,6 +350,13 @@ def test_completion_is_empty_in_an_unclosed_comment_string_or_term_import():
         assert service.completion(changed, position) == []
 
 
+def test_word_binders_read_like_symbol_ones():
+    service = example_service()
+    path = os.path.join(PROJECT, "word_binders.ml")
+    service.index(path, True)
+    check_lookup_comments(service, service.get_document(path), EXAMPLES)
+
+
 @pytest.mark.parametrize(("term", "labels"), [
     ("`!fi", []),
     ("`?fi", []),
@@ -359,10 +366,20 @@ def test_completion_is_empty_in_an_unclosed_comment_string_or_term_import():
     ("`!x fi", []),
     ("`!x:num fi", []),
     ("`!x. !fi", []),
+    ("`forall fi", []),
+    ("`exists fi", []),
+    ("`existsunique fi", []),
+    ("`lambda fi", []),
+    ("`forall x fi", []),
+    ("`forall x:num fi", []),
+    ("`forall x. exists fi", []),
     # After the dot, and after the connectives holding a backslash, names are uses.
     ("`!x. fi", ["fibonacci", "fib", "fib3"]),
     ("`x /\\ fi", ["fibonacci", "fib", "fib3"]),
     ("`x \\/ fi", ["fibonacci", "fib", "fib3"]),
+    ("`forall x. fi", ["fibonacci", "fib", "fib3"]),
+    ("`forall_thm fi", ["fibonacci", "fib", "fib3"]),
+    ("`my_exists fi", ["fibonacci", "fib", "fib3"]),
 ])
 def test_a_variable_being_named_completes_to_nothing(term: str, labels: list[str]):
     service = example_service()
