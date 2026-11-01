@@ -88,6 +88,25 @@ let t = `!E. E`;;
 let greeting = "hello Gadget";;
 (* complete: hello Gadget => none *)
 
+let (tup_a, tup_b) = (1, 2);;
+(* complete: let (tup_ => none *)
+(* complete: let (tup_a, tup_ => none *)
+
+let tup_fn (tup_c, tup_d) = tup_c;;
+(* complete: let tup_fn (tup_ => none *)
+(* complete: let tup_fn (tup_c, tup_ => none *)
+
+let [lst_a; lst_b] = [1; 2];;
+(* complete: let [lst_ => none *)
+(* complete: let [lst_a; lst_ => none *)
+
+let u = fun (fun_a, fun_b) -> fun_a;;
+(* complete: fun (fun_ => none *)
+
+let u = (tup_a, lst_b);;
+(* complete: let u = (tup_ => tup_a:value tup_b:value tup_fn:value *)
+(* complete: let u = (tup_a, lst_ => lst_a:value lst_b:value *)
+
 let (+/) x y = x;;
 
 let sum = 1 + 2;;

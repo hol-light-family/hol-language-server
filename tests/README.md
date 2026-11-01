@@ -80,7 +80,8 @@ for `comment_defs.ml`, `completion.ml`, and `completion_files.ml`,
 ones in `constants.ml`, and `test_unclosed_terms_offer_what_the_complete_comments_say`
 checks the one in `completion_unclosed_term.ml`. `test_hover_definition_and_symbols`
 in `test_lsp_server.py` drives the `tactics.ml` ones end to end over LSP
-(same-file targets only).
+(same-file targets only), and `test_completion_offers_what_the_complete_comments_say`
+there drives the `complete` ones of the same four files.
 
 ```ocaml
 let USES = `2 divides_alt 4 /\ evens 4`;;

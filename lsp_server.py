@@ -250,7 +250,10 @@ def create_server(service: HolLanguageService, settings: Settings,
 
     @server.feature(lsp.TEXT_DOCUMENT_COMPLETION, lsp.CompletionOptions(trigger_characters=["/", '"']))
     def on_completion(ls: LanguageServer, params: lsp.CompletionParams) -> lsp.CompletionList:
-        doc = prepare(ls, params.text_document.uri)
+        # Sent on most keystrokes: no walk over the files already loaded.
+        file_path = _fs_path(params.text_document.uri)
+        index(ls, file_path, False)
+        doc = service.get_document(file_path)
         pos = _core_position(doc.astral_lines, params.position)
         return _to_completion_list(service.completion(doc, pos), doc.astral_lines)
 
