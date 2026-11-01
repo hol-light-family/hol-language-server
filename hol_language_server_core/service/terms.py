@@ -6,9 +6,11 @@ import re
 from hol_language_server_core.parser import HOL_TOKEN_RE
 
 # A binder and the names before its dot: `!x y.`, `?x.`, `?!x.`, `\x.`,
-# `@x.`. Not the `\` of `/\` or `\/`. The names may carry types, which may
-# hold spaces (`x:24 word`), `->`, `^` and commas.
-_BINDER_HEAD = r"(?<![/\\])(?:\?!|[!?\\@])(?!/)"
+# `@x.`, or a word: `forall x.`, `exists x.`, `existsunique x.`, `lambda x.`.
+# Not the `\` of `/\` or `\/`, nor a word inside a longer name. The names may
+# carry types, which may hold spaces (`x:24 word`), `->`, `^` and commas.
+_BINDER_HEAD = (r"(?:(?<![/\\])(?:\?!|[!?\\@])(?!/)"
+                r"|(?<![\w'])(?:forall|exists|existsunique|lambda)(?![\w']))")
 _BINDER_NAMES = r"[\w'\s():^\->,]*"
 _BINDER_RE = re.compile(_BINDER_HEAD + "(" + _BINDER_NAMES + r"?)\.")
 _OPEN_BINDER_RE = re.compile(_BINDER_HEAD + _BINDER_NAMES + "$")

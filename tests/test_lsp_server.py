@@ -258,8 +258,23 @@ def test_hover_definition_and_symbols():
         client.notify("textDocument/didClose", {"textDocument": {"uri": uri(TACTICS)}})
 
 
+def test_word_binders_over_lsp():
+    from hol_server_paths import HOL
+
+    path = os.path.join(PROJECT, "word_binders.ml")
+    with start_server(HOL) as (client, _):
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        client.notify(
+            "textDocument/didOpen",
+            {"textDocument": {"uri": uri(path), "languageId": "ocaml", "version": 1, "text": text}},
+        )
+        check_lsp_lookup_comments(client, path, text)
+        client.notify("textDocument/didClose", {"textDocument": {"uri": uri(path)}})
+
+
 @pytest.mark.parametrize(
-    "name", ["completion.ml", "completion_files.ml", "completion_unclosed_term.ml", "constants.ml"])
+    "name", ["completion.ml", "completion_files.ml", "completion_unclosed_term.ml", "constants.ml", "word_binders.ml"])
 def test_completion_offers_what_the_complete_comments_say(name: str):
     from hol_server_paths import HOL
 
