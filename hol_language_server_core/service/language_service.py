@@ -51,6 +51,14 @@ class HolLanguageService:
             return self._overlays[file_path]
         return TextDoc(file_path, util.read_text(file_path))
 
+    def astral_lines(self, file_path: str) -> dict[int, str]:
+        """The file's lines outside the Basic Multilingual Plane, as indexed,
+        so converting indexed positions reads no file."""
+        file = self.database.get_file_index(file_path)
+        if file is not None:
+            return file.astral_lines
+        return self.get_document(file_path).astral_lines
+
     def index(self, file_path: str, full: bool) -> list[Dependency]:
         """Index the file and its dependencies. Returns unresolved ones."""
         doc = self.get_document(file_path)

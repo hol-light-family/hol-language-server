@@ -417,6 +417,27 @@ def test_completion_list_is_capped_and_marked_incomplete(tmp_path: Path):
         client.notify("textDocument/didClose", {"textDocument": {"uri": uri(path)}})
 
 
+def test_workspace_symbols_convert_columns_from_the_index(tmp_path: Path):
+    from hol_server_paths import HOL
+
+    path = tmp_path / "gone.ml"
+    # The name starts at code-point column 12, UTF-16 column 13.
+    text = "(* 🙂 *) let zz_gone = 1;;\n"
+    path.write_text(text, encoding="utf-8")
+    with start_server(HOL) as (client, _):
+        client.notify(
+            "textDocument/didOpen",
+            {"textDocument": {"uri": uri(str(path)), "languageId": "ocaml", "version": 1, "text": text}},
+        )
+        client.notify("textDocument/didClose", {"textDocument": {"uri": uri(str(path))}})
+        # Deleted after indexing: the index still holds it, and the columns
+        # come from the index, not the file.
+        path.unlink()
+        [found] = client.request("workspace/symbol", {"query": "zz_gone"})
+        assert found["location"]["range"] == {
+            "start": {"line": 0, "character": 13}, "end": {"line": 0, "character": 20}}
+
+
 def test_definition_converts_utf16_columns(tmp_path: Path):
     from hol_server_paths import HOL
 

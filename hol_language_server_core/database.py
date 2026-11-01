@@ -12,7 +12,7 @@ from hol_language_server_core.config import DEBUG
 from hol_language_server_core.parser import (CustomCommands, Definition, Module, OpenDecl, ParseResult,
                                              declared_infixes, parse_text)
 from hol_language_server_core.parser import Dependency as ParsedDependency
-from hol_language_server_core.text import Location, Position, Range, TextDoc, location
+from hol_language_server_core.text import Location, Position, Range, TextDoc, astral_lines, location
 
 logger = logging.getLogger(__name__)
 
@@ -72,8 +72,12 @@ class FileIndex:
     """Everything indexed for one file: its dependencies, definitions, HOL
     constants, modules, and the module tracking its open/include statements."""
 
-    def __init__(self, mtime: float | None, dependencies: list[Dependency], result: ParseResult) -> None:
+    def __init__(self, mtime: float | None, dependencies: list[Dependency], result: ParseResult,
+                 astral: dict[int, str]) -> None:
         self.mtime = mtime
+        # The text's lines outside the Basic Multilingual Plane, for UTF-16
+        # columns without reading the file again.
+        self.astral_lines = astral
         # Resolved and unresolved dependencies. May be cyclic (`needs`
         # allows cyclic dependencies, but the result could be unpredictable).
         self.dependencies = dependencies
@@ -142,10 +146,10 @@ class Database:
         return None
 
     def _add_to_index(self, file_path: str, result: ParseResult, deps: list[Dependency],
-                      mtime: float | None) -> None:
+                      mtime: float | None, astral: dict[int, str]) -> None:
         self._remove_from_index(file_path)
         self._invalidate_caches()
-        self._file_index[file_path] = FileIndex(mtime, deps, result)
+        self._file_index[file_path] = FileIndex(mtime, deps, result, astral)
 
         def add[T: (Definition, Module)](index: dict[str, list[T]], items: list[T]) -> None:
             for item in items:
@@ -181,7 +185,8 @@ class Database:
         mtime = os.stat(file_path).st_mtime
         known = file.mtime if file is not None and file.mtime is not None else -1
         if mtime > known:
-            result = parse_text(util.read_text(file_path), file_path, custom, self._infixes)
+            text = util.read_text(file_path)
+            result = parse_text(text, file_path, custom, self._infixes)
             if root_paths is None:
                 deps = []
             else:
@@ -191,7 +196,7 @@ class Database:
                     os.path.dirname(file_path),
                     root_paths,
                 )
-            self._add_to_index(file_path, result, deps, mtime)
+            self._add_to_index(file_path, result, deps, mtime, astral_lines(text))
             return True, deps
         return False, file.dependencies if file is not None else []
 
@@ -430,7 +435,7 @@ class Database:
                 if file is not None
                 else []
             )
-            self._add_to_index(doc_path, result, deps, None)
+            self._add_to_index(doc_path, result, deps, None, document.astral_lines)
             return [dep for dep in deps if not dep.is_resolved]
         if DEBUG:
             logger.error(
@@ -449,7 +454,7 @@ class Database:
         unresolved = [dep for dep in doc_deps if not dep.is_resolved]
         # A cyclic dependency on this document indexes it twice; cyclic
         # dependencies should be removed instead.
-        self._add_to_index(doc_path, result, doc_deps, None)
+        self._add_to_index(doc_path, result, doc_deps, None, document.astral_lines)
         visited = {doc_path}
         new_paths = util.filter_map(doc_deps, lambda dep: dep.path)
         queue = list(new_paths) if full_index else util.difference(new_paths, old_paths)
