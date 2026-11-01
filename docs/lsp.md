@@ -26,6 +26,8 @@ The language server `hol-language-server` gives an editor lookups over HOL Light
     - Terms in Unicode syntax are not read.
   - On `needs "..."`, it opens the file named.
 - Completion: suggests what continues the word or path under the cursor.
+  At most 200 items; a longer list is marked incomplete, so the editor asks
+  again as more is typed.
   - A name: definitions and modules in the files read whose name starts with
     what is typed. A member of a module that is not open is suggested with
     its module name (`Kernel.kfun2`). At the start of a word nothing is

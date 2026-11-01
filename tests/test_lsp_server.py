@@ -243,7 +243,7 @@ def test_completion_suggests_names_members_and_files():
         [found] = client.request(
             "textDocument/completion",
             {"textDocument": {"uri": uri(TACTICS)}, "position": {"line": 17, "character": 22}},
-        )
+        )["items"]
         assert found == {"label": "HELPER_TAC", "kind": 6, "textEdit": {
             "range": {"start": {"line": 17, "character": 12}, "end": {"line": 17, "character": 22}},
             "newText": "HELPER_TAC"}}
@@ -252,7 +252,7 @@ def test_completion_suggests_names_members_and_files():
             client.request(
                 "textDocument/completion",
                 {"textDocument": {"uri": uri(TACTICS)}, "position": {"line": 11, "character": 14}},
-            )
+            )["items"]
             == []
         )
         # In a comment, nothing completes either.
@@ -260,7 +260,7 @@ def test_completion_suggests_names_members_and_files():
             client.request(
                 "textDocument/completion",
                 {"textDocument": {"uri": uri(TACTICS)}, "position": {"line": 4, "character": 14}},
-            )
+            )["items"]
             == []
         )
 
@@ -274,7 +274,7 @@ def test_completion_suggests_names_members_and_files():
             "textDocument/completion",
             {"textDocument": {"uri": uri(TACTICS)},
              "position": {"line": text.count("\n"), "character": len("let z = Kernel.kfun")}},
-        )
+        )["items"]
         assert [item["label"] for item in members] == ["kfun", "kfun2"]
         for item in members:
             edit = item["textEdit"]
@@ -290,7 +290,7 @@ def test_completion_suggests_names_members_and_files():
             "textDocument/completion",
             {"textDocument": {"uri": uri(TACTICS)},
              "position": {"line": 0, "character": len('needs "lib/u')}},
-        )
+        )["items"]
         assert {item["label"] for item in files} == {"util.ml"}
         assert files[0]["kind"] == 17
         assert files[0]["sortText"] == " util.ml"
@@ -311,7 +311,7 @@ def test_term_completion_suggests_constants():
             "textDocument/completion",
             {"textDocument": {"uri": uri(CONSTANTS)},
              "position": {"line": 46, "character": 55}},
-        )
+        )["items"]
         assert [(item["label"], item["kind"]) for item in members] == [
             ("fibonacci", 21), ("fib", 21), ("fib3", 21)]
         for item in members:
@@ -379,10 +379,41 @@ def test_completion_converts_utf16_columns(tmp_path: Path):
         [item] = client.request(
             "textDocument/completion",
             {"textDocument": {"uri": uri(path)}, "position": {"line": 0, "character": 14}},
-        )
+        )["items"]
         assert item["label"] == "x.ml"
         assert item["textEdit"]["range"] == {
             "start": {"line": 0, "character": 13}, "end": {"line": 0, "character": 14}}
+        client.notify("textDocument/didClose", {"textDocument": {"uri": uri(path)}})
+
+
+def test_completion_list_is_capped_and_marked_incomplete(tmp_path: Path):
+    from hol_server_paths import HOL
+
+    path = str(tmp_path / "many.ml")
+    # 201 names start with `n`, more than the 200-item cap; 11 start with `n10`.
+    text = "".join(f"let n{i} = {i};;\n" for i in range(201)) + "let z = n"
+    with start_server(HOL) as (client, _):
+        client.notify(
+            "textDocument/didOpen",
+            {"textDocument": {"uri": uri(path), "languageId": "ocaml", "version": 1, "text": text}},
+        )
+        capped = client.request(
+            "textDocument/completion",
+            {"textDocument": {"uri": uri(path)}, "position": {"line": 201, "character": 9}},
+        )
+        assert capped["isIncomplete"] is True
+        assert len(capped["items"]) == 200
+        client.notify(
+            "textDocument/didChange",
+            {"textDocument": {"uri": uri(path), "version": 2},
+             "contentChanges": [{"text": text + "10"}]},
+        )
+        narrowed = client.request(
+            "textDocument/completion",
+            {"textDocument": {"uri": uri(path)}, "position": {"line": 201, "character": 11}},
+        )
+        assert narrowed["isIncomplete"] is False
+        assert len(narrowed["items"]) == 11
         client.notify("textDocument/didClose", {"textDocument": {"uri": uri(path)}})
 
 

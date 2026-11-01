@@ -20,6 +20,9 @@ from hol_language_server_core.text import Position as CorePosition, Range as Cor
 logger = logging.getLogger(__name__)
 
 MAX_WORKSPACE_SYMBOLS = 1000
+# A one-letter prefix over HOL Light matches thousands of names. The client
+# re-queries an incomplete list as the prefix grows.
+MAX_COMPLETION_ITEMS = 200
 
 _SYMBOL_KINDS = {
     "theorem": lsp.SymbolKind.Constant,
@@ -118,6 +121,13 @@ def _to_completion_item(item: Completion, doc: TextDoc) -> lsp.CompletionItem:
         commit_characters=item.commit_characters,
         text_edit=lsp.TextEdit(range=_to_lsp_range(item.edit_range, doc), new_text=item.label)
         if item.edit_range is not None else None,
+    )
+
+
+def _to_completion_list(items: list[Completion], doc: TextDoc) -> lsp.CompletionList:
+    return lsp.CompletionList(
+        is_incomplete=len(items) > MAX_COMPLETION_ITEMS,
+        items=[_to_completion_item(item, doc) for item in items[:MAX_COMPLETION_ITEMS]],
     )
 
 
@@ -255,10 +265,10 @@ def create_server(service: HolLanguageService, settings: Settings,
         ]
 
     @server.feature(lsp.TEXT_DOCUMENT_COMPLETION, lsp.CompletionOptions(trigger_characters=["/", '"']))
-    def on_completion(ls: LanguageServer, params: lsp.CompletionParams) -> list[lsp.CompletionItem]:
+    def on_completion(ls: LanguageServer, params: lsp.CompletionParams) -> lsp.CompletionList:
         doc = prepare(ls, params.text_document.uri)
         pos = _core_position(doc, params.position)
-        return [_to_completion_item(item, doc) for item in service.completion(doc, pos)]
+        return _to_completion_list(service.completion(doc, pos), doc)
 
     @server.feature(lsp.TEXT_DOCUMENT_DOCUMENT_SYMBOL)
     def on_document_symbol(ls: LanguageServer,
