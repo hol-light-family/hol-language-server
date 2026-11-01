@@ -36,8 +36,10 @@ The language server `hol-language-server` gives an editor lookups over HOL Light
     `.ml` and `.hl` files and folders under the root paths that start with
     what is typed, or under the HOL Light directory for `loads`.
     Typing `"` or `/` opens the list.
-  - A name being defined: nothing. After `let`, `and`, `fun`, or `module`,
-    while only names follow it, the word declares a name instead of using one.
+  - A name being defined: nothing. After `let`, `and`, `fun`, `module`, or
+    `module type`, while only names follow it, the word declares a name
+    instead of using one. A keyword in between ends that, so the name in
+    `let open M in name` completes.
   - Inside a term: the HOL constants starting with the name, also while
     the closing backquote is still missing. A variable the term binds
     completes to nothing, and an `^` antiquotation completes OCaml names

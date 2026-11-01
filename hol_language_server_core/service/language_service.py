@@ -17,6 +17,15 @@ from hol_language_server_core.service.terms import bound_in_term, hol_word_at
 from hol_language_server_core.service.tokens import REFERENCE_RE, enclosing_token, is_name_start
 from hol_language_server_core.text import Position, Range, TextDoc, location
 
+# `let`, `let rec`, `and`, `fun`, `module`, or `module type`, then names
+# only up to the word being typed: the position declares a name. A finished
+# keyword ends the run, so `let open M in x` uses x.
+_NOT_KEYWORD = r"(?!(?:" + "|".join(sorted(OCAML_KEYWORDS)) + r")(?![\w']))"
+_BINDER_SITE_RE = re.compile(
+    r"\b(?:let\s+(?:rec\s+)?|and\s+|fun\s+|module\s+(?:type\s+)?)"
+    r"(?:" + _NOT_KEYWORD + r"[A-Za-z0-9_']+\s+)*[A-Za-z0-9_']*$"
+)
+
 
 class HolLanguageService:
     def __init__(self, settings: Settings) -> None:
@@ -282,14 +291,10 @@ class HolLanguageService:
         return [self._definition_completion(constant, False, edit_range) for constant in found]
 
     def _at_binder_position(self, doc: TextDoc, position: Position) -> bool:
-        """Whether the position declares a name instead of using one: after
-        `let`, `and`, `fun`, or `module`, with only names up to the cursor."""
+        """Whether the position declares a name instead of using one: the
+        line up to the cursor ends in a `_BINDER_SITE_RE` match."""
         before = doc.line_at(position.line)[:position.character]
-        return re.search(
-            r"\b(let\s+(?:rec\s+)?|and\s+|fun\s+|module\s+)"
-            r"(?:[A-Za-z0-9_']+\s+)*[A-Za-z0-9_']*$",
-            before,
-        ) is not None
+        return _BINDER_SITE_RE.search(before) is not None
 
     def _completion_edit_range(self, word: str, word_range: Range, position: Position,
                                edit_start: int) -> Range:

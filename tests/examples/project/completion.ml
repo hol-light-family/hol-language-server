@@ -23,6 +23,12 @@ end
 let probe_tac = 1;;
 (* complete: let probe_tac => none *)
 
+let y = let open Gadget in probe_t;;
+(* complete: let open Gadget in probe_t => probe_tac:value *)
+
+module type Probe_sig = sig end;;
+(* complete: module type Probe_s => none *)
+
 let z = ADD_S;;
 (* complete: let z = ADD_S => ADD_SYM:theorem ADD_SYM_ALT:theorem *)
 
