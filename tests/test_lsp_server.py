@@ -94,9 +94,9 @@ class LspClient:
 
 
 @contextmanager
-def start_server(hol: str) -> Iterator[tuple[LspClient, Any]]:
+def start_server(hol: str, workspace: str = PROJECT) -> Iterator[tuple[LspClient, Any]]:
     proc = subprocess.Popen(
-        [sys.executable, SERVER, "--hol-path", hol, "--workspace", PROJECT],
+        [sys.executable, SERVER, "--hol-path", hol, "--workspace", workspace],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -434,6 +434,17 @@ def test_load_path_diagnostics():
         )
         check_lsp_diagnostics(client, path, text)
         client.notify("textDocument/didClose", {"textDocument": {"uri": uri(path)}})
+
+
+def test_a_symlink_cycle_does_not_stop_workspace_indexing(tmp_path: Path):
+    from hol_server_paths import HOL
+
+    (tmp_path / "good.ml").write_text("let found_me = 1;;\n", encoding="utf-8")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "loop").symlink_to(tmp_path, target_is_directory=True)
+    with start_server(HOL, str(tmp_path)) as (client, _):
+        [found] = client.request("workspace/symbol", {"query": "found_me"})
+        assert found["location"]["uri"] == uri(str(tmp_path / "good.ml"))
 
 
 def test_definitions_in_comments_are_not_published():

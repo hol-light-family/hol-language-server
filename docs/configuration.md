@@ -28,5 +28,5 @@ The flags of the language server `hol-language-server`. Setup: [README](../READM
   - Without them, these definitions are read as plain values with no statement, and those loads are not followed.
   - Each name must be a plain OCaml name (letters, digits, `_`, `'`). Anything else stops the server.
 - `--no-index-workspace`: do not read every `.ml`/`.hl` file of the workspace at startup.
-  - By default they are all read.
+  - By default they are all read. A directory or file that cannot be read is skipped, with a line in the server log. Links to directories are followed, and a directory reached twice is read once, under its real path if it has one in the workspace.
   - Reading them matters: a file can use definitions it never loads itself, because the file that loads it loaded them first. Those are found only when the loading file was read.
