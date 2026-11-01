@@ -37,6 +37,40 @@ def example_service() -> HolLanguageService:
 
 
 # ======== Parser: what parse_text finds, and what it warns or skips. =========
+@pytest.mark.parametrize(("statement", "before", "after"), [
+    ('load_path := "a" :: !load_path;;', ("a",), ()),
+    ('load_path := "a" :: "b" :: !load_path;;', ("a", "b"), ()),
+    ('load_path := "a" :: (!load_path);;', ("a",), ()),
+    ('load_path :=\n  "a" ::\n  !load_path;;', ("a",), ()),
+    ('load_path := ["a"; "b"] @ !load_path;;', ("a", "b"), ()),
+    ('load_path := !load_path @ ["a"; "b"];;', (), ("a", "b")),
+    ('load_path := ["a"; "b"];;', ("a", "b"), ()),
+    # Not string constants, or not code: not read.
+    ('load_path := dir :: !load_path;;', (), ()),
+    ('load_path := (Filename.concat (!hol_dir) "a") :: !load_path;;', (), ()),
+    ('load_path := "a" :: !other;;', (), ()),
+    ('load_path := "a" :: f !load_path;;', (), ()),
+    ('let load_path = ref ["a"];;', (), ()),
+    ('M.load_path := "a" :: !load_path;;', (), ()),
+    ('(* load_path := "a" :: !load_path;; *)', (), ()),
+    ('let s = "load_path := \\"a\\" :: !load_path;;";;', (), ()),
+])
+def test_parser_reads_load_path_updates_of_string_constants(statement: str, before: tuple[str, ...],
+                                                            after: tuple[str, ...]):
+    result = parse_text(statement + '\nneeds "x.ml";;\n', "/t.ml", CustomCommands())
+    [dep] = result.dependencies
+    assert (dep.load_path.before, dep.load_path.after) == (before, after)
+
+
+def test_load_path_updates_add_up_and_apply_to_later_loads():
+    result = parse_text(
+        'needs "x.ml";;\nload_path := "a" :: !load_path;;\nneeds "y.ml";;\n'
+        'load_path := "b" :: !load_path;;\nload_path := !load_path @ ["c"];;\nneeds "z.ml";;\n',
+        "/t.ml", CustomCommands())
+    assert [(dep.load_path.before, dep.load_path.after) for dep in result.dependencies] == [
+        ((), ()), (("a",), ()), (("b", "a"), ("c",))]
+
+
 @pytest.mark.parametrize("name", ["definitions.ml", "modules.ml", "sources.ml"])
 def test_parser_finds_what_the_expect_comments_say(name: str):
     doc = read_doc(name)

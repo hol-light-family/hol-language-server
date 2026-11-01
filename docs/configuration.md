@@ -16,6 +16,10 @@ The flags of the language server `hol-language-server`. Setup: [README](../READM
   - The first directory that has the file wins.
   - `loads "..."` paths ignore this list. They are always under the HOL Light directory.
   - Any other `{...}`, one whose value is not set, or an empty path stops the server.
+- `--load-path`: a directory searched after the `--root` ones, like an entry of `load_path` in HOL Light. Repeat it for several.
+  - Default: `$HOLLIGHT_LOAD_PATH`, split at `:` (`;` on Windows), as HOL Light does. Giving the flag replaces it.
+  - An initial `$/` is the HOL Light directory, and `$$` a real `$`. A relative directory is relative to the directory the server runs in; `.` is the directory of the file that has the `needs`.
+  - `loads "..."` paths ignore it too.
 - `--custom-import`, `--custom-theorem`, `--custom-definition`: your project's own command names. Repeat each for several.
   - Use them when a project wraps the built-in commands, for example `let my_prove (t, tac) = prove (t, tac)`.
   - `--custom-import NAME`: `NAME "file.ml"` loads a file, like `needs`. It is searched the same way as `needs`.

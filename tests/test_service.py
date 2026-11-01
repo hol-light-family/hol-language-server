@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 from hol_server_paths import EXAMPLES, HOL, PROJECT
 from lookups import check_lookup_comments
-from hol_language_server_core.config import default_settings, expand_root_paths, parse_settings, settings_from_options
+from hol_language_server_core.config import (default_settings, expand_root_paths, parse_settings,
+                                              settings_from_options, split_load_path)
 from hol_language_server_core.parser import CustomCommands
 from hol_language_server_core.service import HolLanguageService
 from hol_language_server_core.text import Position, TextDoc
@@ -391,6 +392,107 @@ def test_a_variable_being_named_completes_to_nothing(term: str, labels: list[str
     service.index(path, True)
     position = Position(changed.line_count - 1, len("let t = " + term))
     assert [item.label for item in service.completion(changed, position)] == labels
+
+
+# ================================ Load path. =================================
+def load_path_service(workspace: str, hol: str = HOL) -> HolLanguageService:
+    settings = default_settings()
+    settings.hol_path = hol
+    settings.workspace = workspace
+    settings.root_paths = [".", "{workspace}"]
+    return HolLanguageService(settings)
+
+
+def test_load_path_updates_find_what_the_comments_say():
+    workspace = os.path.join(EXAMPLES, "load_path")
+    service = load_path_service(workspace)
+    path = os.path.join(workspace, "main.ml")
+    service.index(path, True)
+    check_lookup_comments(service, service.get_document(path), EXAMPLES)
+    [missing] = service.missing_loads(path)[path]
+    assert missing.name == "too_early.ml"
+
+
+def test_load_path_expands_the_hol_directory(tmp_path: Path):
+    hol = tmp_path / "hol"
+    (hol / "extra").mkdir(parents=True)
+    (hol / "hol.ml").write_text("")
+    (hol / "extra" / "in_hol.ml").write_text("let in_hol = 1;;\n")
+    (tmp_path / "$odd").mkdir()
+    (tmp_path / "$odd" / "in_odd.ml").write_text("let in_odd = 1;;\n")
+    (tmp_path / "absolute").mkdir()
+    (tmp_path / "absolute" / "in_absolute.ml").write_text("let in_absolute = 1;;\n")
+    service = load_path_service(str(tmp_path), str(hol))
+    path = str(tmp_path / "t.ml")
+    service.open_document(path, (
+        'load_path := ["$/extra"; "$$odd"; "%s"] @ !load_path;;\n'
+        'needs "in_hol.ml";;\nneeds "in_odd.ml";;\nneeds "in_absolute.ml";;\n' % (tmp_path / "absolute")))
+    service.index(path, True)
+    file = service.database.get_file_index(path)
+    assert file is not None
+    assert [dep.path for dep in file.dependencies] == [
+        str(hol / "extra" / "in_hol.ml"),
+        str(tmp_path / "$odd" / "in_odd.ml"),
+        str(tmp_path / "absolute" / "in_absolute.ml"),
+    ]
+
+
+@pytest.mark.parametrize(("value", "paths"), [
+    ("", []),
+    ("a", ["a"]),
+    ("a:b", ["a", "b"]),
+    (":a::b:", ["a", "b"]),
+    # As hol_loader.ml: these do not split, and the characters stay.
+    ("a\\:b:c", ["a\\:b", "c"]),
+    ("'a:b':c", ["'a:b'", "c"]),
+    ('"a:b":c', ['"a:b"', "c"]),
+])
+def test_split_load_path_follows_hol_light(value: str, paths: list[str]):
+    assert split_load_path(value) == paths
+
+
+def test_load_path_flag_replaces_the_environment(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("HOLLIGHT_LOAD_PATH", "/from/env:$/in_hol")
+    settings, _ = parse_settings(["--hol-path", "/hol", "--root", "."], None)
+    assert expand_root_paths(settings) == [".", "/from/env", "/hol/in_hol"]
+    settings, _ = parse_settings(["--hol-path", "/hol", "--root", ".", "--load-path", "/a", "--load-path", "$$b"], None)
+    assert expand_root_paths(settings) == [".", "/a", "$b"]
+    # Editor settings keep it: they have no load path of their own.
+    assert settings_from_options({"rootPaths": ["/r"]}, settings).load_path == ["/a", "$$b"]
+
+
+def test_load_path_setting_finds_and_completes_after_the_roots(tmp_path: Path):
+    (tmp_path / "extra").mkdir()
+    (tmp_path / "extra" / "in_extra.ml").write_text("let in_extra = 1;;\n")
+    (tmp_path / "extra" / "both.ml").write_text("let extra_both = 1;;\n")
+    (tmp_path / "both.ml").write_text("let top_both = 1;;\n")
+    settings = default_settings()
+    settings.hol_path = HOL
+    settings.workspace = str(tmp_path)
+    settings.root_paths = ["."]
+    settings.load_path = [str(tmp_path / "extra")]
+    service = HolLanguageService(settings)
+    path = str(tmp_path / "t.ml")
+    doc = service.open_document(path, 'needs "in_extra.ml";;\nneeds "both.ml";;\n')
+    service.index(path, True)
+    file = service.database.get_file_index(path)
+    assert file is not None
+    assert [dep.path for dep in file.dependencies] == [
+        str(tmp_path / "extra" / "in_extra.ml"), str(tmp_path / "both.ml")]
+    [item] = service.completion(doc, Position(0, len('needs "in_e')))
+    assert (item.label, item.kind) == ("in_extra.ml", "file")
+
+
+def test_load_path_does_not_change_loads(tmp_path: Path):
+    (tmp_path / "vendor").mkdir()
+    (tmp_path / "vendor" / "v.ml").write_text("let v = 1;;\n")
+    service = load_path_service(str(tmp_path))
+    path = str(tmp_path / "t.ml")
+    doc = service.open_document(path, 'load_path := "vendor" :: !load_path;;\nloads "v.ml";;\n')
+    service.index(path, True)
+    [missing] = service.missing_loads(path)[path]
+    assert missing.name == "v.ml"
+    assert service.completion(doc, Position(1, len('loads "v'))) == []
 
 
 # ================ Symbols: document order, predicate search. =================

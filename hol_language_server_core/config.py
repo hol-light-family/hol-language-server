@@ -5,6 +5,7 @@ import os
 import re
 from dataclasses import dataclass, field
 
+from hol_language_server_core import util
 from hol_language_server_core.parser import CustomCommands
 
 DEBUG = bool(os.environ.get("HOL_LS_DEBUG"))
@@ -18,6 +19,9 @@ class Settings:
     hol_path: str = ""
     # Where `needs` paths are searched: may contain `.`, `{hol}`, `{workspace}`
     root_paths: list[str] = field(default_factory=lambda: list(DEFAULT_ROOT_PATHS))
+    # Searched after root_paths, as HOL Light reads `load_path` entries:
+    # `$HOLLIGHT_LOAD_PATH` unless `--load-path` is given
+    load_path: list[str] = field(default_factory=list[str])
     # The workspace root which replaces `{workspace}` in root_paths
     workspace: str = ""
     # Automatically index open documents.
@@ -45,6 +49,31 @@ def _command_names(names: list[object], what: str) -> list[str]:
     return [str(name) for name in names]
 
 
+def split_load_path(value: str) -> list[str]:
+    """The directories of `$HOLLIGHT_LOAD_PATH`, split as `hol_loader.ml` does:
+    no split at a separator that is escaped or quoted, and the backslashes
+    and quotes stay in the directory. Empty ones are dropped."""
+    paths: list[str] = []
+    start = 0
+    escaped = False
+    quote: str | None = None
+    for i, char in enumerate(value):
+        if escaped:
+            escaped = False
+        elif quote is not None:
+            if char == quote:
+                quote = None
+        elif char == os.pathsep:
+            paths.append(value[start:i])
+            start = i + 1
+        elif char == "\\":
+            escaped = True
+        elif char in "'\"":
+            quote = char
+    paths.append(value[start:])
+    return [path for path in paths if path]
+
+
 def default_settings() -> Settings:
     return Settings()
 
@@ -54,6 +83,8 @@ def parse_settings(argv: list[str] | None, description: str | None) -> tuple[Set
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--hol-path", default=None)
     parser.add_argument("--root", action="append", default=None)
+    parser.add_argument("--load-path", action="append", default=None,
+                        help="a directory searched after the roots (repeatable); default: $HOLLIGHT_LOAD_PATH")
     parser.add_argument("--workspace", default=None)
     parser.add_argument("--no-index-workspace", action="store_true")
     parser.add_argument("--custom-import", action="append", default=[],
@@ -68,6 +99,10 @@ def parse_settings(argv: list[str] | None, description: str | None) -> tuple[Set
     settings.workspace = args.workspace or os.getcwd()
     if args.root:
         settings.root_paths = args.root
+    if args.load_path is not None:
+        settings.load_path = args.load_path
+    else:
+        settings.load_path = split_load_path(os.environ.get("HOLLIGHT_LOAD_PATH", ""))
     settings.index_workspace = not args.no_index_workspace
     settings.custom_commands = CustomCommands(
         imports=_command_names(args.custom_import, "--custom-import"),
@@ -96,6 +131,7 @@ def settings_from_options(options: object, base: Settings) -> Settings:
     return Settings(
         hol_path=options.get("path", base.hol_path),
         root_paths=list(root_paths),
+        load_path=base.load_path,
         workspace=base.workspace,
         auto_index=options.get("autoIndex", base.auto_index),
         index_workspace=options.get("indexWorkspace", base.index_workspace),
@@ -111,8 +147,9 @@ def settings_from_options(options: object, base: Settings) -> Settings:
 
 
 def expand_root_paths(settings: Settings) -> list[str]:
-    """Replace the `{hol}` and `{workspace}` parts of the root paths. Raises
-    ValueError on another placeholder, an unset value, or an empty path."""
+    """Replace the `{hol}` and `{workspace}` parts of the root paths, then add
+    the load path, with its `$` expanded. Raises ValueError on another
+    placeholder, an unset value, or an empty root path."""
     values = {"hol": settings.hol_path, "workspace": settings.workspace}
 
     def expand(path: str) -> str:
@@ -129,4 +166,5 @@ def expand_root_paths(settings: Settings) -> list[str]:
             raise ValueError("Empty root path")
         return expanded
 
-    return [expand(path) for path in settings.root_paths]
+    return [*(expand(path) for path in settings.root_paths),
+            *(util.hol_expand_directory(path, settings.hol_path) for path in settings.load_path)]

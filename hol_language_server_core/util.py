@@ -33,6 +33,18 @@ def file_exists(path: str, check_dir: bool) -> bool:
         return False
 
 
+def hol_expand_directory(path: str, hol_path: str) -> str:
+    """A `load_path` entry as HOL Light reads it: an initial `$` is the HOL
+    Light directory, and `$$` a real `$`."""
+    if path in ("$", "$/"):
+        return hol_path
+    if path.startswith("$$"):
+        return path[1:]
+    if path.startswith("$/"):
+        return os.path.join(hol_path, path[2:])
+    return path
+
+
 def read_dir(path: str) -> list[os.DirEntry[str]]:
     with os.scandir(path) as entries:
         return list(entries)

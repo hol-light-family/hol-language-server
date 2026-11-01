@@ -370,12 +370,14 @@ class HolLanguageService:
         items: list[Completion] = []
         searched: set[str] = set()
         # `loads` resolves under the HOL Light directory only.
-        roots = [self._settings.hol_path] if command.group(1) == "loads" else self.root_paths
-        for root in roots:
-            base = os.path.dirname(doc.path) if root == "." else root
+        if command.group(1) == "loads":
+            bases = [self._settings.hol_path]
+        else:
+            bases = self.database.search_dirs(doc.path, string.start_pos, self._settings.hol_path, self.root_paths)
+        for base in bases:
             search_dir = os.path.abspath(os.path.join(base, directory))
             if search_dir in searched:
-                # Two roots over one directory list it once.
+                # Two search directories over one list it once.
                 continue
             searched.add(search_dir)
             try:
