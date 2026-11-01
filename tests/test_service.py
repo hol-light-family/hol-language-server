@@ -169,6 +169,13 @@ def test_terms_offer_what_the_complete_comments_say():
     check_lookup_comments(service, service.get_document(path), EXAMPLES)
 
 
+def test_unclosed_terms_offer_what_the_complete_comments_say():
+    service = example_service()
+    path = os.path.join(PROJECT, "completion_unclosed_term.ml")
+    service.index(path, True)
+    check_lookup_comments(service, service.get_document(path), EXAMPLES)
+
+
 def test_import_paths_offer_what_the_complete_comments_say():
     service = example_service()
     path = os.path.join(PROJECT, "completion_files.ml")

@@ -22,7 +22,7 @@ then dies without its dependencies.)
 - `examples/`: each file starts with a comment saying what it sets up and what
   the tests check in it.
     - `hol/`: stands in for a HOL Light directory (`hol.ml`, `kernel.ml`).
-    - `project/`: a small workspace whose files load each other. Each file sets up a case: `main.ml` loads a file that does not exist, `dup.ml` defines the same name twice, `ctx.ml` uses names loaded only by the file that loads it, `conversions.ml` builds and uses conversions, `locals.ml` has `let ... in` names and function parameters, `constants.ml` defines HOL constants and uses them in terms, `bound.ml` binds the name of a constant in a term, `comment_defs.ml` defines a name for real next to a commented-out one, plus a name that exists only in a comment, `completion.ml` probes name and member completion with `complete` comments, and `completion_files.ml` probes import paths the same way.
+    - `project/`: a small workspace whose files load each other. Each file sets up a case: `main.ml` loads a file that does not exist, `dup.ml` defines the same name twice, `ctx.ml` uses names loaded only by the file that loads it, `conversions.ml` builds and uses conversions, `locals.ml` has `let ... in` names and function parameters, `constants.ml` defines HOL constants and uses them in terms, `bound.ml` binds the name of a constant in a term, `comment_defs.ml` defines a name for real next to a commented-out one, plus a name that exists only in a comment, `completion.ml` probes name and member completion with `complete` comments, `completion_files.ml` probes import paths the same way, and `completion_unclosed_term.ml` probes term completion without the closing backquote.
     - `definitions.ml`, `modules.ml`, `sources.ml`: single files for parser
       cases, with their expected results in `expect` comments. `sources.ml`
       checks where the source of each definition starts and ends.
@@ -75,9 +75,10 @@ checks them. Each of `test_local_names_follow_scope`,
 and calls it. `test_a_comment_definition_is_not_a_definition`,
 `test_completion_offers_what_the_complete_comments_say`, and
 `test_import_paths_offer_what_the_complete_comments_say` do the same
-for `comment_defs.ml`, `completion.ml`, and `completion_files.ml`, and
+for `comment_defs.ml`, `completion.ml`, and `completion_files.ml`,
 `test_terms_offer_what_the_complete_comments_say` checks the `complete`
-ones in `constants.ml`. `test_hover_definition_and_symbols`
+ones in `constants.ml`, and `test_unclosed_terms_offer_what_the_complete_comments_say`
+checks the one in `completion_unclosed_term.ml`. `test_hover_definition_and_symbols`
 in `test_lsp_server.py` drives the `tactics.ml` ones end to end over LSP
 (same-file targets only).
 

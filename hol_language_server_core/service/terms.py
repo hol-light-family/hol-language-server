@@ -14,11 +14,16 @@ _BINDER_RE = re.compile(r"(?<![/\\])(?:\?!|[!?\\@])(?!/)([\w'\s():^\->,]*?)\.")
 
 def term_start(text: str, start: int, offset: int) -> int | None:
     """Offset of the backquote opening the HOL term the offset is inside,
-    else None. Scans text from start, which is outside comments, strings,
+    else None. A term without its closing backquote yet runs to the end of
+    the text. Scans text from start, which is outside comments, strings,
     and terms."""
     pos = start
     while True:
         m = REFERENCE_RE.search(text, pos)
+        quote = text.find("`", pos)
+        if quote != -1 and quote < offset and (m is None or quote < m.start()):
+            # A backquote no token starts at opens no closed term.
+            return quote
         if m is None or m.start() >= offset:
             return None
         if m.group(0) == "(*":
