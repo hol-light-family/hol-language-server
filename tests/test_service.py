@@ -428,6 +428,38 @@ def test_custom_commands_come_from_options_and_flags():
 
 
 # =============== Loads: custom imports, missing-load coverage. ===============
+def test_indexing_parses_unchanged_text_once(monkeypatch: pytest.MonkeyPatch):
+    import hol_language_server_core.database as database
+    from hol_language_server_core.parser import ParseResult
+
+    service = example_service()
+    path = os.path.join(PROJECT, "completion.ml")
+    with open(path, encoding="utf-8") as handle:
+        doc = service.open_document(path, handle.read())
+    service.index(path, True)
+    parsed: list[str] = []
+    real_parse = database.parse_text
+
+    def counting_parse(text: str, file_path: str, custom: CustomCommands,
+                       infixes: frozenset[str]) -> ParseResult:
+        parsed.append(file_path)
+        return real_parse(text, file_path, custom, infixes)
+
+    monkeypatch.setattr(database, "parse_text", counting_parse)
+    # Requests on the same document: no parse, full or not.
+    service.index(path, True)
+    service.index(path, False)
+    assert path not in parsed
+    # The same text in a new document object: still no parse.
+    same = service.open_document(path, doc.text)
+    service.index(path, True)
+    assert path not in parsed
+    # Changed text, even on the same object: parsed once.
+    same.text += "\n"
+    service.index(path, False)
+    assert parsed.count(path) == 1
+
+
 def test_definition_jumps_through_a_custom_import(tmp_path: Path):
     # tmp_path: the helper name and custom settings must not leak into the shared workspace.
     (tmp_path / "lib.ml").write_text("let helper = 1;;\n")

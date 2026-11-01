@@ -6,6 +6,7 @@ import logging
 import os
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from hol_language_server_core import util
 from hol_language_server_core.config import DEBUG
@@ -87,6 +88,23 @@ class FileIndex:
         self.global_module = result.global_module
 
 
+def _text_key(text: str) -> tuple[int, int]:
+    """Length and hash of the text, standing in for it. Python caches a
+    string's hash on the string, so a request on unchanged text hashes nothing,
+    and changed text is always a new string with its own hash."""
+    return len(text), hash(text)
+
+
+@dataclass
+class _ParsedDocument:
+    """The last parse of a document, with the text it was parsed from, as
+    `_text_key`, and the settings."""
+    text_key: tuple[int, int]
+    custom: CustomCommands
+    infixes: frozenset[str]
+    result: ParseResult
+
+
 class Database:
     def __init__(self) -> None:
         # Base HOL Light files: every other file is assumed to depend on them.
@@ -106,6 +124,9 @@ class Database:
         self._open_modules_cache: dict[str, set[Module]] = {}
         self._loaders: dict[str, list[tuple[str, int]]] | None = None
         self._base_hol_light_indexed = False
+        # The last parse of each indexed document, reused while its text is
+        # unchanged. Keys the text by `_text_key`, not the text, to keep no copy.
+        self._parsed_documents: dict[str, _ParsedDocument] = {}
 
     def is_base_hol_light_file(self, file_path: str) -> bool:
         return file_path in self._base_hol_light_files
@@ -187,6 +208,8 @@ class Database:
         if mtime > known:
             text = util.read_text(file_path)
             result = parse_text(text, file_path, custom, self._infixes)
+            # The index no longer holds a document's stored parse: drop it.
+            self._parsed_documents.pop(file_path, None)
             if root_paths is None:
                 deps = []
             else:
@@ -418,7 +441,16 @@ class Database:
         doc_path = document.path
         if DEBUG:
             logger.error("Indexing: %s", doc_path)
-        result = parse_text(document.text, doc_path, custom, self._infixes)
+        parsed = self._parsed_documents.get(doc_path)
+        # Requests between edits index the same text: parsing it again is most
+        # of a request's time in a large file.
+        text_key = _text_key(document.text)
+        if (parsed is not None and parsed.text_key == text_key
+                and parsed.custom == custom and parsed.infixes == self._infixes):
+            result = parsed.result
+        else:
+            result = parse_text(document.text, doc_path, custom, self._infixes)
+            self._parsed_documents[doc_path] = _ParsedDocument(text_key, custom, self._infixes, result)
         doc_dep_names = {dep.name: dep for dep in result.dependencies}
         old_file = self._file_index.get(doc_path)
         old_names = [dep.name for dep in old_file.dependencies] if old_file is not None else []
