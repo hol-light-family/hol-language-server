@@ -447,6 +447,31 @@ def test_a_symlink_cycle_does_not_stop_workspace_indexing(tmp_path: Path):
         assert found["location"]["uri"] == uri(str(tmp_path / "good.ml"))
 
 
+# The seeds of a set order that hid the bug, and of one that did not.
+@pytest.mark.parametrize("seed", ["0", "1", "2", "3", "4", "5"])
+def test_opens_of_loaded_files_resolve_under_every_hash_seed(seed: str, monkeypatch: pytest.MonkeyPatch):
+    from hol_server_paths import EXAMPLES, HOL
+
+    monkeypatch.setenv("PYTHONHASHSEED", seed)
+    workspace = os.path.join(EXAMPLES, "open_order")
+    path = os.path.join(workspace, "main.ml")
+    with start_server(HOL, workspace) as (client, _):
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        client.notify(
+            "textDocument/didOpen",
+            {"textDocument": {"uri": uri(path), "languageId": "ocaml", "version": 1, "text": text}},
+        )
+        position = TextDoc(path, text).position_at(text.index("use = treasure") + len("use = t"))
+        [target] = client.request(
+            "textDocument/definition",
+            {"textDocument": {"uri": uri(path)},
+             "position": {"line": position.line, "character": position.character}},
+        )
+        assert target["uri"] == uri(os.path.join(workspace, "provider.ml"))
+        client.notify("textDocument/didClose", {"textDocument": {"uri": uri(path)}})
+
+
 def test_definitions_in_comments_are_not_published():
     from hol_server_paths import HOL
 

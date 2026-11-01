@@ -7,8 +7,8 @@ then dies without its dependencies.)
 
 ## Layout
 
-- `test_core.py`: the parser, the index (`database.py`), and the service
-  lookups.
+- `test_core.py`: the parser, the index (`database.py`), symbol search by name,
+  and text and file helpers.
 - `service/`: the service behind editor features, called directly.
     - `test_service.py`: positions, hover, go to definition, and document and
       workspace symbols.
@@ -29,6 +29,7 @@ then dies without its dependencies.)
     - `hol/`: stands in for a HOL Light directory (`hol.ml`, `kernel.ml`).
     - `project/`: a small workspace whose files load each other. Each file sets up a case: `main.ml` loads a file that does not exist, `dup.ml` defines the same name twice, `ctx.ml` uses names loaded only by the file that loads it, `conversions.ml` builds and uses conversions, `locals.ml` has `let ... in` names and function parameters, `constants.ml` defines HOL constants and uses them in terms, `bound.ml` binds the name of a constant in a term, `word_binders.ml` does the same with `forall` and the other word binders, `comment_defs.ml` defines a name for real next to a commented-out one, plus a name that exists only in a comment, `completion.ml` probes name and member completion with `complete` comments, `completion_files.ml` probes import paths the same way, and `completion_unclosed_term.ml` probes term completion without the closing backquote.
     - `load_path/`: `main.ml` updates `load_path` to reach `vendor/` and `later/`, with `goto`, `complete`, and `diagnostic` comments. It is outside `project/` because it has a missing load on purpose.
+    - `open_order/`: opens across loaded files, whose order matters, with `goto` comments.
     - `definitions.ml`, `modules.ml`, `sources.ml`: single files for parser
       cases, with their expected results in `expect` comments. `sources.ml`
       checks where the source of each definition starts and ends.

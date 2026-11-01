@@ -198,6 +198,30 @@ def test_workspace_indexing_reads_a_directory_once_under_its_real_path(tmp_path:
     assert indexed_paths(service, "in_linked") == [str(workspace / "m_link" / "linked.ml")]
 
 
+# ========================= Opens across loaded files. =========================
+@pytest.mark.parametrize("name", ["main.ml", "before_provider.ml", "after_provider.ml"])
+def test_opens_of_loaded_files_apply_in_load_order(name: str):
+    workspace = os.path.join(EXAMPLES, "open_order")
+    service = load_path_service(workspace)
+    path = os.path.join(workspace, name)
+    service.index(path, True)
+    check_lookup_comments(service, service.get_document(path), EXAMPLES)
+
+
+def test_opens_of_the_files_loaded_before_a_file_by_its_loader_apply(tmp_path: Path):
+    (tmp_path / "provider.ml").write_text(
+        "module M = struct\n  module Inner = struct\n    let treasure = 1\n  end\nend;;\nopen M;;\n")
+    (tmp_path / "opener.ml").write_text("open Inner;;\n")
+    (tmp_path / "user.ml").write_text("let use = treasure;;\n")
+    (tmp_path / "top.ml").write_text('needs "provider.ml";;\nneeds "opener.ml";;\nneeds "user.ml";;\n')
+    service = load_path_service(str(tmp_path))
+    top, user = str(tmp_path / "top.ml"), str(tmp_path / "user.ml")
+    service.index(top, True)
+    doc = service.get_document(user)
+    [target] = service.definition(doc, Position(0, len("let use = tr")))
+    assert target.path == str(tmp_path / "provider.ml")
+
+
 # =============== Loads: custom imports, missing-load coverage. ===============
 def test_indexing_parses_unchanged_text_once(monkeypatch: pytest.MonkeyPatch):
     import hol_language_server_core.database as database

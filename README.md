@@ -19,6 +19,8 @@ The server takes the non-REPL settings of vscode-hol-light as flags. Most setups
 - `--hol-path`: HOL Light directory (with `hol.ml`).
 - `--workspace`: workspace root. For s2n-bignum, whose proofs use paths like `needs "arm/proofs/base.ml"`, point it at the s2n-bignum checkout.
 
+If your project loads files from directories HOL Light finds through `load_path`, name them with `--load-path` or `$HOLLIGHT_LOAD_PATH`.
+
 If your project wraps `needs`, `prove` or `new_definition` in commands of its own, name them with `--custom-import`, `--custom-theorem` and `--custom-definition`.
 
 Full flag reference: [docs/configuration.md](docs/configuration.md).
@@ -35,4 +37,4 @@ hol-language-server --hol-path /path/to/hol-light --workspace /path/to/s2n-bignu
 
 ## Development
 
-`uv sync` creates `.venv` from `uv.lock`. `uv run pytest` runs the tests, and `uv run basedpyright` the type check. Both run in CI on every pull request. How the tests work and how to add one: [tests/README.md](tests/README.md).
+`uv sync` creates `.venv` from `uv.lock`. `uv run python -m pytest` runs the tests, and `uv run basedpyright` the type check. Both run in CI on every pull request. How the tests work and how to add one: [tests/README.md](tests/README.md).

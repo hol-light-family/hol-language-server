@@ -1,4 +1,4 @@
-"""Tests of the parser, database, util, and the service lookup methods."""
+"""Tests of the parser, database, symbol search by name, and util."""
 
 import logging
 import os
