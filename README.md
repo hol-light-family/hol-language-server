@@ -35,6 +35,30 @@ It speaks LSP over stdio:
 hol-language-server --hol-path /path/to/hol-light --workspace /path/to/s2n-bignum
 ```
 
+## Editor extension
+
+`editors/vscode/` is a minimal VS Code client: it starts the server above
+over `.ml` and `.hl` files. It declares no language, so syntax highlighting
+comes from vscode-hol-light or an OCaml extension. Needs
+[Node.js](https://nodejs.org/) for packaging:
+
+```sh
+cd editors/vscode
+npm ci
+npx @vscode/vsce package
+code --install-extension hol-language-server-0.1.0.vsix
+```
+
+Two settings, both under `holLanguageServer`: `command` (default
+`hol-language-server`) and `args`, flags passed straight to the server, for
+example `"args": ["--hol-path", "/path/to/hol-light", "--load-path", "lib"]`.
+New server flags work without updating the extension, and `--workspace` is
+unneeded: the server uses the editor's open folder. The server restarts on
+its own when they change, or run `HOL Language Server: Restart`.
+
+Running it alongside vscode-hol-light gives duplicate hovers and definitions,
+so disable one of them.
+
 ## Development
 
 `uv sync` creates `.venv` from `uv.lock`. `uv run python -m pytest` runs the tests, and `uv run basedpyright` the type check. Both run in CI on every pull request. How the tests work and how to add one: [tests/README.md](tests/README.md).
