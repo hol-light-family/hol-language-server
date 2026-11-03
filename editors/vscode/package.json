@@ -1,0 +1,42 @@
+{
+  "name": "hol-language-server",
+  "displayName": "HOL Light Language Server Protocol",
+  "description": "Starts the hol-language-server language server over .ml and .hl files: completion, hover, Go to Definition, and symbols",
+  "version": "0.1.0",
+  "publisher": "local",
+  "private": true,
+  "engines": {
+    "vscode": "^1.82.0"
+  },
+  "main": "./extension.js",
+  "activationEvents": ["workspaceContains:**/*.ml", "workspaceContains:**/*.hl"],
+  "contributes": {
+    "configuration": {
+      "title": "HOL Language Server",
+      "properties": {
+        "holLanguageServer.command": {
+          "type": "string",
+          "default": "hol-language-server",
+          "description": "The language server command: a name on PATH or an absolute path."
+        },
+        "holLanguageServer.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Flags passed straight to the server. In the Settings UI, click **Add Item** once per flag or value (e.g. `--hol-path`, then `/path/to/hol-light` as a separate item). In `settings.json`: `\"holLanguageServer.args\": [\"--hol-path\", \"/path/to/hol-light\"]`. New server flags work without updating the extension."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "holLanguageServer.restart",
+        "title": "HOL Language Server: Restart"
+      }
+    ]
+  },
+  "dependencies": {
+    "vscode-languageclient": "9.0.1"
+  }
+}

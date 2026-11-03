@@ -35,6 +35,41 @@ It speaks LSP over stdio:
 hol-language-server --hol-path /path/to/hol-light --workspace /path/to/s2n-bignum
 ```
 
+## Editor extension
+
+`editors/vscode/` is a minimal VS Code client using the Hol Light MCP
+
+To setup:
+
+1. Get a HOL Light source checkout, for example
+   `git clone https://github.com/jrh13/hol-light`. It does not need to be
+   built: the server only reads its files.
+2. Install the server, as in [Install](#install). Check that
+   `which hol-language-server` prints a path. If it prints nothing, run
+   `uv tool update-shell` and open a new terminal.
+3. Install the extension. To build the `.vsix`, with
+   [Node.js](https://nodejs.org/):
+
+   ```sh
+   cd editors/vscode
+   npm ci
+   npx @vscode/vsce package
+   code --install-extension hol-language-server-0.1.0.vsix
+   ```
+4. Point the server at HOL Light in VS Code's `settings.json`. Without it the
+   server stops with `No HOL Light directory`:
+
+   ```json
+   "holLanguageServer.args": ["--hol-path", "/path/to/hol-light"]
+   ```
+
+5. Quit VS Code fully (Cmd+Q on macOS) and reopen it on your project folder,
+   so it sees the new `PATH`. The Output panel, channel
+   `HOL Light Language Server Protocol`, shows the server log.
+
+Running it alongside vscode-hol-light gives duplicate hovers and definitions,
+so disable one of them.
+
 ## Development
 
 `uv sync` creates `.venv` from `uv.lock`. `uv run python -m pytest` runs the tests, and `uv run basedpyright` the type check. Both run in CI on every pull request. How the tests work and how to add one: [tests/README.md](tests/README.md).
