@@ -1,6 +1,6 @@
 {
   "name": "hol-language-server",
-  "displayName": "HOL Light static lookup",
+  "displayName": "HOL Light Language Server Protocol",
   "description": "Starts the hol-language-server language server over .ml and .hl files: completion, hover, Go to Definition, and symbols",
   "version": "0.1.0",
   "publisher": "local",
