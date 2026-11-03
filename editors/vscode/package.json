@@ -25,7 +25,7 @@
             "type": "string"
           },
           "default": [],
-          "description": "Flags passed straight to the server, for example [\"--hol-path\", \"/path/to/hol-light\", \"--load-path\", \"lib\"]. New server flags work without updating the extension."
+          "markdownDescription": "Flags passed straight to the server. In the Settings UI, click **Add Item** once per flag or value (e.g. `--hol-path`, then `/path/to/hol-light` as a separate item). In `settings.json`: `\"holLanguageServer.args\": [\"--hol-path\", \"/path/to/hol-light\"]`. New server flags work without updating the extension."
         }
       }
     },
