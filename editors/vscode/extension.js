@@ -23,7 +23,7 @@ function createClient() {
   const server = serverOptions();
   return new LanguageClient(
     "hol-language-server",
-    "HOL Light static lookup",
+    "HOL Light Language Server Protocol",
     { run: server, debug: server },
     {
       documentSelector: [{ scheme: "file", pattern: "**/*.{ml,hl}" }],
@@ -58,7 +58,7 @@ function restart() {
 }
 
 function activate(context) {
-  outputChannel = vscode.window.createOutputChannel("HOL Light static lookup");
+  outputChannel = vscode.window.createOutputChannel("HOL Light Language Server Protocol");
   context.subscriptions.push(
     outputChannel,
     vscode.commands.registerCommand("holLanguageServer.restart", restart),
