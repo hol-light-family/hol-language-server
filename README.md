@@ -37,24 +37,35 @@ hol-language-server --hol-path /path/to/hol-light --workspace /path/to/s2n-bignu
 
 ## Editor extension
 
-`editors/vscode/` is a minimal VS Code client: it starts the server above
-over `.ml` and `.hl` files. It declares no language, so syntax highlighting
-comes from vscode-hol-light or an OCaml extension. Needs
-[Node.js](https://nodejs.org/) for packaging:
+`editors/vscode/` is a minimal VS Code client using the Hol Light MCP
 
-```sh
-cd editors/vscode
-npm ci
-npx @vscode/vsce package
-code --install-extension hol-language-server-0.1.0.vsix
-```
+To setup:
 
-Two settings, both under `holLanguageServer`: `command` (default
-`hol-language-server`) and `args`, flags passed straight to the server, for
-example `"args": ["--hol-path", "/path/to/hol-light", "--load-path", "lib"]`.
-New server flags work without updating the extension, and `--workspace` is
-unneeded: the server uses the editor's open folder. The server restarts on
-its own when they change, or run `HOL Language Server: Restart`.
+1. Get a HOL Light source checkout, for example
+   `git clone https://github.com/jrh13/hol-light`. It does not need to be
+   built: the server only reads its files.
+2. Install the server, as in [Install](#install). Check that
+   `which hol-language-server` prints a path. If it prints nothing, run
+   `uv tool update-shell` and open a new terminal.
+3. Install the extension. To build the `.vsix`, with
+   [Node.js](https://nodejs.org/):
+
+   ```sh
+   cd editors/vscode
+   npm ci
+   npx @vscode/vsce package
+   code --install-extension hol-language-server-0.1.0.vsix
+   ```
+4. Point the server at HOL Light in VS Code's `settings.json`. Without it the
+   server stops with `No HOL Light directory`:
+
+   ```json
+   "holLanguageServer.args": ["--hol-path", "/path/to/hol-light"]
+   ```
+
+5. Quit VS Code fully (Cmd+Q on macOS) and reopen it on your project folder,
+   so it sees the new `PATH`. The Output panel, channel
+   `HOL Light Language Server Protocol`, shows the server log.
 
 Running it alongside vscode-hol-light gives duplicate hovers and definitions,
 so disable one of them.
